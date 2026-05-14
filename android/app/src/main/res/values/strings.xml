@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Android Agent</string>
+    <string name="accessibility_service_description">Allows Android Agent to observe the screen and perform requested actions.</string>
+</resources>

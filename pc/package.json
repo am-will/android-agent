@@ -1,0 +1,28 @@
+{
+  "name": "android-codex-phone-agent-pc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "bridge": "tsx src/bridge/server.ts",
+    "mcp": "tsx src/mcp/androidPhoneServer.ts",
+    "phone:usb": "adb reverse tcp:8787 tcp:8787 && adb shell am start -n dev.androidagent/.MainActivity --ez startAgent true",
+    "phone:health": "curl -sS http://127.0.0.1:8787/health",
+    "demo:open-settings": "tsx src/scripts/sendCommand.ts open_app '{\"appName\":\"Settings\"}'",
+    "demo:agent": "tsx src/scripts/sendUserRequest.ts",
+    "codex:schemas": "codex app-server generate-ts --out src/generated/codex-app-server"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "tsx": "^4.20.6",
+    "ws": "^8.18.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
+  }
+}
