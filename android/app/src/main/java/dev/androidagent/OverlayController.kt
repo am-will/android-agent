@@ -1,0 +1,425 @@
+package dev.androidagent
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import kotlinx.coroutines.CompletableDeferred
+
+class OverlayController(
+    private val context: Context,
+    private val onSubmit: (String) -> Unit,
+    private val onStop: () -> Unit
+) {
+    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var bubbleView: View? = null
+    private var panelView: View? = null
+    private var panelScrimView: View? = null
+    private var confirmationView: View? = null
+    private var confirmationScrimView: View? = null
+    private var statusText: TextView? = null
+
+    fun show() {
+        if (!Settings.canDrawOverlays(context) || bubbleView != null) {
+            return
+        }
+        val bubble = ImageButton(context).apply {
+            setImageResource(R.drawable.codex_bubble_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            background = roundedDrawable(Color.TRANSPARENT, dp(18))
+            contentDescription = "Android Agent"
+            elevation = dp(8).toFloat()
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { togglePanel() }
+        }
+        val params = overlayParams(width = dp(64), height = dp(64), focusable = false).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = dp(16)
+            y = dp(160)
+        }
+        attachDrag(bubble, params) { togglePanel() }
+        windowManager.addView(bubble, params)
+        bubbleView = bubble
+    }
+
+    fun hide() {
+        bubbleView?.let { windowManager.removeView(it) }
+        dismissPanel()
+        dismissConfirmation()
+        bubbleView = null
+    }
+
+    fun setStatus(text: String) {
+        statusText?.text = text
+    }
+
+    fun askConfirmation(message: String, preview: String?): CompletableDeferred<Boolean> {
+        val deferred = CompletableDeferred<Boolean>()
+        if (!Settings.canDrawOverlays(context)) {
+            deferred.complete(false)
+            return deferred
+        }
+        dismissConfirmation()
+
+        val surface = themeColor(android.R.attr.colorBackground, 0xFFFFFFFF.toInt())
+        val primaryText = themeColor(android.R.attr.textColorPrimary, 0xFF111111.toInt())
+        val secondaryText = themeColor(android.R.attr.textColorSecondary, 0xFF666666.toInt())
+        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
+
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = roundedDrawable(surface, dp(24), 0x1F888888)
+            elevation = dp(12).toFloat()
+        }
+        layout.addView(TextView(context).apply {
+            text = "Are you sure?"
+            textSize = 18f
+            setTextColor(primaryText)
+        })
+        layout.addView(TextView(context).apply {
+            text = listOfNotNull(message, preview).joinToString("\n\n")
+            setTextColor(secondaryText)
+            textSize = 14f
+            setPadding(0, dp(8), 0, dp(14))
+        })
+        val buttons = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        buttons.addView(Button(context).apply {
+            text = "✕"
+            textSize = 20f
+            background = roundedDrawable(0x00FFFFFF, dp(18), 0x33888888)
+            setOnClickListener {
+                dismissConfirmation()
+                deferred.complete(false)
+            }
+        }, LinearLayout.LayoutParams(dp(56), dp(44)).apply { rightMargin = dp(10) })
+        buttons.addView(Button(context).apply {
+            text = "✓"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(accent, dp(18))
+            setOnClickListener {
+                dismissConfirmation()
+                deferred.complete(true)
+            }
+        }, LinearLayout.LayoutParams(dp(56), dp(44)))
+        layout.addView(buttons)
+
+        val scrim = View(context).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener {
+                dismissConfirmation()
+                deferred.complete(false)
+            }
+        }
+        val scrimParams = overlayParams(
+            width = WindowManager.LayoutParams.MATCH_PARENT,
+            height = WindowManager.LayoutParams.MATCH_PARENT,
+            focusable = false
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+        windowManager.addView(scrim, scrimParams)
+        confirmationScrimView = scrim
+
+        val params = overlayParams(width = dp(320), height = WindowManager.LayoutParams.WRAP_CONTENT, focusable = false).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(96)
+        }
+        windowManager.addView(layout, params)
+        confirmationView = layout
+        return deferred
+    }
+
+    private fun togglePanel() {
+        if (panelView != null) {
+            dismissPanel()
+            return
+        }
+
+        val surface = themeColor(android.R.attr.colorBackground, 0xFFFFFFFF.toInt())
+        val primaryText = themeColor(android.R.attr.textColorPrimary, 0xFF111111.toInt())
+        val secondaryText = themeColor(android.R.attr.textColorSecondary, 0xFF666666.toInt())
+        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
+
+        val input = EditText(context).apply {
+            hint = "Ask Codex to control this phone"
+            minLines = 1
+            maxLines = 4
+            setTextColor(primaryText)
+            setHintTextColor(secondaryText)
+            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+        }
+        statusText = TextView(context).apply {
+            text = "Connected. Ready for a new request."
+            textSize = 12f
+            setTextColor(secondaryText)
+            setPadding(0, dp(10), 0, 0)
+        }
+        val actionRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        actionRow.addView(Button(context).apply {
+            text = "Stop"
+            setTextColor(primaryText)
+            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            setOnClickListener {
+                onStop()
+                setStatus("Stop requested")
+            }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(10) })
+        actionRow.addView(Button(context).apply {
+            text = "Send"
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(accent, dp(18))
+            setOnClickListener {
+                val text = input.text.toString().trim()
+                if (text.isNotEmpty()) {
+                    onSubmit(text)
+                    input.setText("")
+                    setStatus("Sent to PC bridge")
+                    dismissPanel()
+                }
+            }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
+
+        val title = TextView(context).apply {
+            text = "Android Agent"
+            textSize = 16f
+            setTextColor(primaryText)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val settingsButton = ImageButton(context).apply {
+            setImageResource(R.drawable.ic_settings_gear)
+            background = roundedDrawable(0x0F888888, dp(14), 0x22888888)
+            contentDescription = "Open Android Agent settings"
+            setColorFilter(primaryText)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setOnClickListener {
+                dismissPanel()
+                openSettings()
+            }
+        }
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(10))
+            addView(title, LinearLayout.LayoutParams(0, dp(40), 1f))
+            addView(settingsButton, LinearLayout.LayoutParams(dp(36), dp(36)))
+        }
+        val panel = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(14))
+            background = roundedDrawable(surface, dp(24), 0x1F888888)
+            elevation = dp(12).toFloat()
+            addView(header)
+            addView(input, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            addView(actionRow, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12) })
+            addView(statusText)
+        }
+
+        val params = overlayParams(width = dp(320), height = WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = dp(16)
+            y = dp(224)
+        }
+        input.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                mainHandler.postDelayed({ keepAboveKeyboard(panel, params) }, 300)
+                mainHandler.postDelayed({ keepAboveKeyboard(panel, params) }, 700)
+            }
+        }
+        val scrim = View(context).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener { dismissPanel() }
+        }
+        val scrimParams = overlayParams(
+            width = WindowManager.LayoutParams.MATCH_PARENT,
+            height = WindowManager.LayoutParams.MATCH_PARENT,
+            focusable = false
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+        windowManager.addView(scrim, scrimParams)
+        panelScrimView = scrim
+
+        attachDrag(header, params, windowView = panel, keepAboveKeyboard = true) {}
+        windowManager.addView(panel, params)
+        panel.post { keepInsideScreen(panel, params) }
+        panelView = panel
+    }
+
+    private fun dismissPanel() {
+        panelView?.let { windowManager.removeView(it) }
+        panelScrimView?.let { windowManager.removeView(it) }
+        panelView = null
+        panelScrimView = null
+    }
+
+    private fun dismissConfirmation() {
+        confirmationView?.let { windowManager.removeView(it) }
+        confirmationScrimView?.let { windowManager.removeView(it) }
+        confirmationView = null
+        confirmationScrimView = null
+    }
+
+    private fun openSettings() {
+        context.startActivity(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+    }
+
+    private fun overlayParams(width: Int, height: Int, focusable: Boolean): WindowManager.LayoutParams {
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        return WindowManager.LayoutParams(
+            width,
+            height,
+            type,
+            if (focusable) WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+    }
+
+    private fun attachDrag(
+        view: View,
+        params: WindowManager.LayoutParams,
+        windowView: View = view,
+        keepAboveKeyboard: Boolean = false,
+        onClick: () -> Unit
+    ) {
+        var startX = 0
+        var startY = 0
+        var touchX = 0f
+        var touchY = 0f
+        var moved = false
+        var downTime = 0L
+        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = params.x
+                    startY = params.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    downTime = event.eventTime
+                    moved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - touchX
+                    val dy = event.rawY - touchY
+                    if (!moved && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
+                        moved = true
+                    }
+                    if (moved) {
+                        params.x = startX + dx.toInt()
+                        params.y = startY + dy.toInt()
+                        keepInsideScreen(windowView, params)
+                        if (keepAboveKeyboard) {
+                            keepAboveKeyboard(windowView, params)
+                        }
+                        windowManager.updateViewLayout(windowView, params)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val isClick = !moved && event.eventTime - downTime < 250
+                    if (isClick) {
+                        onClick()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    moved = false
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
+
+    private fun keepInsideScreen(view: View, params: WindowManager.LayoutParams) {
+        val display = context.resources.displayMetrics
+        val maxX = (display.widthPixels - view.width - dp(8)).coerceAtLeast(dp(8))
+        val maxY = (display.heightPixels - view.height - dp(8)).coerceAtLeast(dp(8))
+        params.x = params.x.coerceIn(dp(8), maxX)
+        params.y = params.y.coerceIn(dp(8), maxY)
+    }
+
+    private fun keepAboveKeyboard(view: View, params: WindowManager.LayoutParams) {
+        val visible = Rect()
+        view.getWindowVisibleDisplayFrame(visible)
+        val displayHeight = context.resources.displayMetrics.heightPixels
+        val keyboardTop = if (visible.bottom > 0 && visible.bottom < displayHeight) {
+            visible.bottom
+        } else {
+            displayHeight - dp(360)
+        }
+        val maxY = (keyboardTop - view.height - dp(16)).coerceAtLeast(dp(16))
+        if (params.y > maxY) {
+            params.y = maxY
+            windowManager.updateViewLayout(view, params)
+        }
+    }
+
+    private fun roundedDrawable(color: Int, radius: Int, strokeColor: Int? = null): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius.toFloat()
+            strokeColor?.let { setStroke(1, it) }
+        }
+    }
+
+    private fun themeColor(attr: Int, fallback: Int): Int {
+        val typedValue = TypedValue()
+        return if (context.theme.resolveAttribute(attr, typedValue, true)) {
+            if (typedValue.resourceId != 0) {
+                context.getColor(typedValue.resourceId)
+            } else {
+                typedValue.data
+            }
+        } else {
+            fallback
+        }
+    }
+}
