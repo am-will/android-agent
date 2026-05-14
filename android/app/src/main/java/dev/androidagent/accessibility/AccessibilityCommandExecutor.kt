@@ -1,0 +1,376 @@
+package dev.androidagent.accessibility
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Path
+import android.graphics.Rect
+import android.hardware.HardwareBuffer
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.util.Base64
+import android.view.Display
+import android.view.accessibility.AccessibilityNodeInfo
+import dev.androidagent.OverlayController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
+import kotlin.coroutines.resume
+
+class AccessibilityCommandExecutor(
+    private val context: Context,
+    private val overlayController: OverlayController?
+) {
+    private val scope = CoroutineScope(Dispatchers.Main)
+    private val observer = ScreenObserver()
+
+    fun execute(command: String, args: JSONObject, callback: (CommandResult) -> Unit) {
+        scope.launch {
+            val result = runCatching { executeInternal(command, args) }
+                .getOrElse { CommandResult(false, currentObservationOrNull(), it.message ?: it.toString()) }
+            callback(result)
+        }
+    }
+
+    private suspend fun executeInternal(command: String, args: JSONObject): CommandResult {
+        val service = PhoneAccessibilityService.instance
+
+        return when (command) {
+            "observe_screen" -> CommandResult(true, observer.observe(requireService(service)))
+            "open_app" -> {
+                val targetPackage = openApp(args)
+                waitMs(1500)
+                val observation = service?.let { observer.observe(it) }
+                    ?: JSONObject().put("screenSummary", "App opened; accessibility service is not enabled")
+                val observedPackage = observation.optString("package")
+                if (observedPackage.isNotBlank() && observedPackage != targetPackage) {
+                    CommandResult(false, observation, "Requested $targetPackage, but foreground package is $observedPackage")
+                } else {
+                    CommandResult(true, observation)
+                }
+            }
+            "tap_node" -> {
+                service ?: return accessibilityMissing()
+                val node = requireNode(args.getString("nodeId"))
+                tapNode(service, node)
+                waitMs(350)
+                CommandResult(true, observer.observe(service))
+            }
+            "tap_xy" -> {
+                service ?: return accessibilityMissing()
+                tap(service, args.getDouble("x").toFloat(), args.getDouble("y").toFloat())
+                waitMs(350)
+                CommandResult(true, observer.observe(service))
+            }
+            "long_press_node" -> {
+                service ?: return accessibilityMissing()
+                val node = requireNode(args.getString("nodeId"))
+                longPressNode(service, node)
+                waitMs(400)
+                CommandResult(true, observer.observe(service))
+            }
+            "type_text" -> {
+                service ?: return accessibilityMissing()
+                typeText(service, args.getString("text"))
+                waitMs(300)
+                CommandResult(true, observer.observe(service))
+            }
+            "scroll" -> {
+                service ?: return accessibilityMissing()
+                scroll(service, args.optString("direction", "down"))
+                waitMs(400)
+                CommandResult(true, observer.observe(service))
+            }
+            "swipe" -> {
+                service ?: return accessibilityMissing()
+                swipe(
+                    service,
+                    args.getDouble("startX").toFloat(),
+                    args.getDouble("startY").toFloat(),
+                    args.getDouble("endX").toFloat(),
+                    args.getDouble("endY").toFloat(),
+                    args.optLong("durationMs", 350L)
+                )
+                waitMs(350)
+                CommandResult(true, observer.observe(service))
+            }
+            "press_back" -> global(requireService(service), AccessibilityService.GLOBAL_ACTION_BACK)
+            "press_home" -> global(requireService(service), AccessibilityService.GLOBAL_ACTION_HOME)
+            "open_recents" -> global(requireService(service), AccessibilityService.GLOBAL_ACTION_RECENTS)
+            "take_screenshot" -> takeScreenshot(requireService(service))
+            "ask_user_confirmation" -> askUserConfirmation(service, args)
+            "wait" -> {
+                waitMs(args.optLong("ms", 1000L))
+                CommandResult(true, service?.let { observer.observe(it) } ?: JSONObject().put("screenSummary", "Wait completed; accessibility service is not enabled"))
+            }
+            else -> CommandResult(false, service?.let { observer.observe(it) }, "Unknown command: $command")
+        }
+    }
+
+    private fun openApp(args: JSONObject): String {
+        val packageName = args.optString("packageName").takeIf { it.isNotBlank() }
+            ?: findPackageByLabel(args.optString("appName"))
+            ?: throw IllegalArgumentException("No packageName or matching appName supplied")
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            ?: throw IllegalArgumentException("No launch intent for $packageName")
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        return packageName
+    }
+
+    private fun findPackageByLabel(appName: String): String? {
+        if (appName.isBlank()) return null
+        val needle = appName.lowercase()
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val launchableApps = context.packageManager.queryIntentActivities(launcherIntent, 0)
+            .map { it.activityInfo.applicationInfo }
+            .distinctBy { it.packageName }
+        return launchableApps
+            .firstOrNull { app -> context.packageManager.getApplicationLabel(app).toString().equals(appName, ignoreCase = true) }
+            ?.packageName
+            ?: launchableApps
+                .firstOrNull { app -> context.packageManager.getApplicationLabel(app).toString().lowercase().contains(needle) }
+                ?.packageName
+    }
+
+    private suspend fun tapNode(service: PhoneAccessibilityService, node: AccessibilityNodeInfo) {
+        val target = node.clickableSelfOrParent() ?: node
+        if (target.isClickable && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return
+        }
+        val rect = Rect()
+        target.getBoundsInScreen(rect)
+        tap(service, rect.centerX().toFloat(), rect.centerY().toFloat())
+    }
+
+    private suspend fun longPressNode(service: PhoneAccessibilityService, node: AccessibilityNodeInfo) {
+        if (node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+            return
+        }
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        gesture(service, rect.centerX().toFloat(), rect.centerY().toFloat(), rect.centerX().toFloat(), rect.centerY().toFloat(), 800)
+    }
+
+    private suspend fun typeText(service: PhoneAccessibilityService, text: String) {
+        val target = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: service.rootInActiveWindow?.findFirstEditable()
+            ?: throw IllegalStateException("No focused or editable text field found")
+
+        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        if (target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+            return
+        }
+
+        if (pasteText(service, target, text)) {
+            return
+        }
+
+        throw IllegalStateException("Focused field accepted neither ACTION_SET_TEXT nor ACTION_PASTE")
+    }
+
+    private suspend fun pasteText(service: PhoneAccessibilityService, target: AccessibilityNodeInfo, text: String): Boolean {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val previousClip = runCatching { clipboard.primaryClip }.getOrNull()
+        val hadPreviousClip = runCatching { clipboard.hasPrimaryClip() }.getOrDefault(false)
+
+        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val rect = Rect()
+        target.getBoundsInScreen(rect)
+        if (!rect.isEmpty) {
+            tap(service, rect.centerX().toFloat(), rect.centerY().toFloat())
+            waitMs(150)
+        }
+
+        return try {
+            clipboard.setPrimaryClip(ClipData.newPlainText("android-agent-text", text))
+            val focused = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: target
+            val pasted = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE) ||
+                target.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            waitMs(150)
+            pasted
+        } finally {
+            if (hadPreviousClip && previousClip != null) {
+                clipboard.setPrimaryClip(previousClip)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                clipboard.clearPrimaryClip()
+            }
+        }
+    }
+
+    private suspend fun scroll(service: PhoneAccessibilityService, direction: String) {
+        val root = service.rootInActiveWindow
+        val scrollable = root?.findFirstScrollable()
+        val action = when (direction) {
+            "up", "left" -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            else -> AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        }
+        if (scrollable?.performAction(action) == true) {
+            return
+        }
+        val display = context.resources.displayMetrics
+        val midX = display.widthPixels / 2f
+        val midY = display.heightPixels / 2f
+        val delta = display.heightPixels * 0.3f
+        when (direction) {
+            "up" -> swipe(service, midX, midY - delta, midX, midY + delta, 350)
+            "left" -> swipe(service, midX - delta, midY, midX + delta, midY, 350)
+            "right" -> swipe(service, midX + delta, midY, midX - delta, midY, 350)
+            else -> swipe(service, midX, midY + delta, midX, midY - delta, 350)
+        }
+    }
+
+    private suspend fun tap(service: PhoneAccessibilityService, x: Float, y: Float) {
+        gesture(service, x, y, x, y, 80)
+    }
+
+    private suspend fun swipe(service: PhoneAccessibilityService, startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long) {
+        gesture(service, startX, startY, endX, endY, durationMs)
+    }
+
+    private suspend fun gesture(service: PhoneAccessibilityService, startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long) {
+        val path = Path().apply {
+            moveTo(startX, startY)
+            lineTo(endX, endY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+            .build()
+        val ok = suspendCancellableCoroutine<Boolean> { continuation ->
+            service.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    continuation.resume(true)
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    continuation.resume(false)
+                }
+            }, Handler(Looper.getMainLooper()))
+        }
+        if (!ok) {
+            throw IllegalStateException("Gesture was cancelled")
+        }
+    }
+
+    private suspend fun global(service: PhoneAccessibilityService, action: Int): CommandResult {
+        if (!service.performGlobalAction(action)) {
+            return CommandResult(false, observer.observe(service), "Global action failed")
+        }
+        waitMs(400)
+        return CommandResult(true, observer.observe(service))
+    }
+
+    private suspend fun takeScreenshot(service: PhoneAccessibilityService): CommandResult {
+        if (Build.VERSION.SDK_INT < 30) {
+            return CommandResult(false, observer.observe(service), "Screenshots require Android API 30+")
+        }
+        val encoded = suspendCancellableCoroutine<String?> { continuation ->
+            service.takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                Executors.newSingleThreadExecutor(),
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                        continuation.resume(encodeScreenshot(screenshot.hardwareBuffer, screenshot.colorSpace))
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        continuation.resume(null)
+                    }
+                }
+            )
+        }
+        return if (encoded != null) {
+            CommandResult(true, observer.observe(service), screenshotBase64 = encoded)
+        } else {
+            CommandResult(false, observer.observe(service), "Screenshot capture failed")
+        }
+    }
+
+    private suspend fun askUserConfirmation(service: PhoneAccessibilityService?, args: JSONObject): CommandResult {
+        val confirmed = overlayController
+            ?.askConfirmation(args.getString("message"), args.optString("preview").takeIf { it.isNotBlank() })
+            ?.await()
+            ?: false
+        return CommandResult(
+            ok = confirmed,
+            observation = service?.let { observer.observe(it) },
+            error = if (confirmed) null else "User did not confirm"
+        )
+    }
+
+    private fun requireService(service: PhoneAccessibilityService?): PhoneAccessibilityService {
+        return service ?: throw IllegalStateException("Accessibility service is not enabled")
+    }
+
+    private fun accessibilityMissing(): CommandResult {
+        return CommandResult(false, null, "Accessibility service is not enabled")
+    }
+
+    private fun encodeScreenshot(buffer: HardwareBuffer, colorSpace: android.graphics.ColorSpace): String? {
+        return try {
+            val bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace)?.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+            val bytes = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 85, bytes)
+            Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)
+        } finally {
+            buffer.close()
+        }
+    }
+
+    private fun currentObservationOrNull(): JSONObject? = PhoneAccessibilityService.instance?.let { observer.observe(it) }
+
+    private fun requireNode(nodeId: String): AccessibilityNodeInfo {
+        return observer.node(nodeId) ?: PhoneAccessibilityService.instance?.let {
+            observer.observe(it)
+            observer.node(nodeId)
+        } ?: throw IllegalArgumentException("Node $nodeId not found. Call observe_screen first.")
+    }
+
+    private suspend fun waitMs(ms: Long) {
+        kotlinx.coroutines.delay(ms.coerceIn(0, 120_000))
+    }
+}
+
+private fun AccessibilityNodeInfo.findFirstEditable(): AccessibilityNodeInfo? {
+    if (isEditable) return this
+    for (i in 0 until childCount) {
+        getChild(i)?.findFirstEditable()?.let { return it }
+    }
+    return null
+}
+
+private fun AccessibilityNodeInfo.findFirstScrollable(): AccessibilityNodeInfo? {
+    if (isScrollable) return this
+    for (i in 0 until childCount) {
+        getChild(i)?.findFirstScrollable()?.let { return it }
+    }
+    return null
+}
+
+private fun AccessibilityNodeInfo.clickableSelfOrParent(): AccessibilityNodeInfo? {
+    if (isClickable && isEnabled) return this
+    var current = parent
+    var depth = 0
+    while (current != null && depth < 6) {
+        if (current.isClickable && current.isEnabled) {
+            return current
+        }
+        current = current.parent
+        depth += 1
+    }
+    return null
+}
