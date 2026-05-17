@@ -71,6 +71,7 @@ class OverlayController(
             x = dp(16)
             y = dp(160)
         }
+        ensureTrashTarget()
         attachDrag(
             view = bubble,
             params = params,
@@ -91,7 +92,7 @@ class OverlayController(
 
     fun hide() {
         bubbleView?.let { windowManager.removeView(it) }
-        hideTrashTarget()
+        removeTrashTarget()
         dismissPanel()
         dismissConfirmation()
         bubbleView = null
@@ -408,37 +409,49 @@ class OverlayController(
         confirmationScrimView = null
     }
 
-    private fun showTrashTarget() {
+    private fun ensureTrashTarget() {
         if (trashTargetView != null) {
             return
         }
-        val size = dp(96)
-        val bottomMargin = dp(32)
-        val display = context.resources.displayMetrics
-        trashTargetBounds = Rect(
-            (display.widthPixels - size) / 2,
-            display.heightPixels - bottomMargin - size,
-            (display.widthPixels + size) / 2,
-            display.heightPixels - bottomMargin
-        )
+        val size = trashTargetSize()
         val target = ImageView(context).apply {
             setImageResource(android.R.drawable.ic_menu_delete)
             setColorFilter(Color.WHITE)
-            background = roundedDrawable(0xCC333333.toInt(), size / 2)
+            background = trashTargetBackground(isActive = false)
             contentDescription = "Close Android Agent bubble"
             elevation = dp(12).toFloat()
-            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            visibility = View.INVISIBLE
         }
         val params = overlayParams(width = size, height = size, focusable = false).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = bottomMargin
+            y = dp(28)
+            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
         windowManager.addView(target, params)
         trashTargetView = target
+        updateTrashTargetBounds()
+    }
+
+    private fun showTrashTarget() {
+        ensureTrashTarget()
+        trashTargetView?.apply {
+            background = trashTargetBackground(isActive = false)
+            visibility = View.VISIBLE
+            post { updateTrashTargetBounds() }
+        }
         isBubbleOverTrashTarget = false
     }
 
     private fun hideTrashTarget() {
+        trashTargetView?.apply {
+            visibility = View.INVISIBLE
+            background = trashTargetBackground(isActive = false)
+        }
+        isBubbleOverTrashTarget = false
+    }
+
+    private fun removeTrashTarget() {
         trashTargetView?.let { windowManager.removeView(it) }
         trashTargetView = null
         trashTargetBounds = Rect()
@@ -446,18 +459,47 @@ class OverlayController(
     }
 
     private fun updateTrashTargetState(params: WindowManager.LayoutParams, view: View): Boolean {
-        val centerX = params.x + view.width / 2
-        val centerY = params.y + view.height / 2
-        val isOverTarget = trashTargetBounds.contains(centerX, centerY)
+        updateTrashTargetBounds()
+        val location = IntArray(2)
+        view.getLocationOnScreen(location)
+        val centerX = location[0] + view.width / 2
+        val centerY = location[1] + view.height / 2
+        val dx = centerX - trashTargetBounds.centerX()
+        val dy = centerY - trashTargetBounds.centerY()
+        val radius = trashTargetBounds.width() / 2
+        val isOverTarget = dx * dx + dy * dy <= radius * radius
         if (isBubbleOverTrashTarget != isOverTarget) {
             isBubbleOverTrashTarget = isOverTarget
-            trashTargetView?.background = roundedDrawable(
-                if (isOverTarget) 0xFFE53935.toInt() else 0xCC333333.toInt(),
-                dp(48)
-            )
+            trashTargetView?.background = trashTargetBackground(isActive = isOverTarget)
         }
         return isOverTarget
     }
+
+    private fun updateTrashTargetBounds() {
+        val target = trashTargetView ?: return
+        val size = trashTargetSize()
+        val location = IntArray(2)
+        target.getLocationOnScreen(location)
+        if (location[0] == 0 && location[1] == 0) {
+            val display = context.resources.displayMetrics
+            val bottom = display.heightPixels - dp(28)
+            val left = (display.widthPixels - size) / 2
+            trashTargetBounds.set(left, bottom - size, left + size, bottom)
+            return
+        }
+        val width = target.width.takeIf { it > 0 } ?: size
+        val height = target.height.takeIf { it > 0 } ?: size
+        trashTargetBounds.set(location[0], location[1], location[0] + width, location[1] + height)
+    }
+
+    private fun trashTargetBackground(isActive: Boolean): GradientDrawable {
+        return roundedDrawable(
+            if (isActive) 0xFFE53935.toInt() else 0xCC333333.toInt(),
+            trashTargetSize() / 2
+        )
+    }
+
+    private fun trashTargetSize(): Int = dp(72)
 
     private fun openSettings() {
         context.startActivity(
