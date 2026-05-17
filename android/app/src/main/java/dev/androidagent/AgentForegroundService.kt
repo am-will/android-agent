@@ -50,6 +50,7 @@ class AgentForegroundService : Service() {
             },
             onToggleVoiceMute = { voiceRuntimeController?.toggleMute() },
             onStopVoice = { voiceRuntimeController?.stopFromUi() },
+            onCancelVoiceTask = { webSocketClient?.sendStopRequest("Cancelled from Android voice UI") },
             onStartTranscription = { startComposerTranscription() },
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() }
@@ -100,7 +101,8 @@ class AgentForegroundService : Service() {
             onRealtimeSpeechStarted = { voiceRuntimeController?.onRealtimeSpeechStarted(it) },
             onRealtimeError = { voiceRuntimeController?.onRealtimeError(it) },
             onRealtimeClosed = { voiceRuntimeController?.onRealtimeClosed(it) },
-            onRealtimeToolResult = { voiceRuntimeController?.onRealtimeToolResult(it) }
+            onRealtimeToolResult = { voiceRuntimeController?.onRealtimeToolResult(it) },
+            onRealtimeTaskStatus = { voiceRuntimeController?.onRealtimeTaskStatus(it) }
         ).also { it.connect() }
     }
 

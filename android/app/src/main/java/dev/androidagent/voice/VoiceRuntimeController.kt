@@ -28,7 +28,11 @@ data class VoiceRuntimeState(
     val status: VoiceRuntimeStatus = VoiceRuntimeStatus.IDLE,
     val transcript: String = "",
     val isMuted: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val currentPhoneTask: String? = null,
+    val queuedPhoneTasks: Int = 0,
+    val latestTaskResult: String? = null,
+    val isPhoneTaskRunning: Boolean = false
 ) {
     val isActive: Boolean = status != VoiceRuntimeStatus.IDLE && status != VoiceRuntimeStatus.ERROR
 }
@@ -202,10 +206,24 @@ class VoiceRuntimeController(
             ) == true
             if (sentOutput) {
                 session?.sendJsonEvent(JSONObject().put("type", "response.create"))
-                updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null))
+                updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null, latestTaskResult = taskResultSummary(payload)))
             } else {
                 updateState(state.copy(error = "Could not send realtime tool output."))
             }
+        }
+    }
+
+    fun onRealtimeTaskStatus(payload: JSONObject) {
+        scope.launch {
+            val currentTask = payload.optString("currentTask").ifBlank { null }
+            updateState(
+                state.copy(
+                    currentPhoneTask = currentTask,
+                    queuedPhoneTasks = payload.optInt("queued", 0).coerceAtLeast(0),
+                    isPhoneTaskRunning = payload.optBoolean("running", false),
+                    error = null
+                )
+            )
         }
     }
 
@@ -218,7 +236,14 @@ class VoiceRuntimeController(
         scope.launch {
             toolCallAccumulator.apply(event)?.let { call ->
                 sendToolCall(call)
-                updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null))
+                updateState(
+                    state.copy(
+                        status = VoiceRuntimeStatus.THINKING,
+                        currentPhoneTask = call.arguments.optString("instruction").takeIf { it.isNotBlank() } ?: state.currentPhoneTask,
+                        isPhoneTaskRunning = true,
+                        error = null
+                    )
+                )
                 return@launch
             }
             when {
@@ -266,6 +291,16 @@ class VoiceRuntimeController(
             VoiceRuntimeStatus.THINKING
         } else {
             VoiceRuntimeStatus.SPEAKING
+        }
+    }
+
+    private fun taskResultSummary(payload: JSONObject): String {
+        val status = payload.optString("status").ifBlank { if (payload.optBoolean("ok", false)) "completed" else "failed" }
+        val detail = payload.optString("error").ifBlank { payload.optString("output") }
+        return if (detail.isBlank()) {
+            "Task $status."
+        } else {
+            "Task $status: $detail"
         }
     }
 

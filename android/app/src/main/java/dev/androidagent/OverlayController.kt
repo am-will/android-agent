@@ -43,6 +43,7 @@ class OverlayController(
     private val onStartVoice: () -> Unit,
     private val onToggleVoiceMute: () -> Unit,
     private val onStopVoice: () -> Unit,
+    private val onCancelVoiceTask: () -> Unit,
     private val onStartTranscription: () -> Unit,
     private val onStopTranscription: () -> Unit,
     private val onCancelTranscription: () -> Unit
@@ -64,8 +65,11 @@ class OverlayController(
     private var voiceSurface: LinearLayout? = null
     private var voiceStatusText: TextView? = null
     private var voiceTranscriptText: TextView? = null
+    private var voiceTaskText: TextView? = null
+    private var voiceResultText: TextView? = null
     private var voiceMuteButton: Button? = null
     private var voiceHangupButton: Button? = null
+    private var voiceCancelTaskButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
     private var composerInput: EditText? = null
     private var transcriptionMicButton: ImageButton? = null
@@ -428,8 +432,11 @@ class OverlayController(
         voiceSurface = null
         voiceStatusText = null
         voiceTranscriptText = null
+        voiceTaskText = null
+        voiceResultText = null
         voiceMuteButton = null
         voiceHangupButton = null
+        voiceCancelTaskButton = null
     }
 
     private fun buildVoiceSurface(surface: Int, primaryText: Int, secondaryText: Int, accent: Int): LinearLayout {
@@ -442,11 +449,27 @@ class OverlayController(
             setTextColor(secondaryText)
             setPadding(0, dp(8), 0, dp(10))
         }
+        voiceTaskText = TextView(context).apply {
+            textSize = 12f
+            setTextColor(secondaryText)
+            setPadding(0, 0, 0, dp(8))
+        }
+        voiceResultText = TextView(context).apply {
+            textSize = 12f
+            setTextColor(secondaryText)
+            setPadding(0, 0, 0, dp(10))
+        }
         voiceMuteButton = Button(context).apply {
             text = "Mute"
             setTextColor(primaryText)
             background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
             setOnClickListener { onToggleVoiceMute() }
+        }
+        voiceCancelTaskButton = Button(context).apply {
+            text = "Cancel task"
+            setTextColor(primaryText)
+            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            setOnClickListener { onCancelVoiceTask() }
         }
         voiceHangupButton = Button(context).apply {
             text = "Hang up"
@@ -457,7 +480,8 @@ class OverlayController(
         val voiceActions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
-            addView(voiceMuteButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(10) })
+            addView(voiceMuteButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
+            addView(voiceCancelTaskButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
             addView(voiceHangupButton, LinearLayout.LayoutParams(0, dp(40), 1f))
         }
         return LinearLayout(context).apply {
@@ -467,6 +491,8 @@ class OverlayController(
             background = roundedDrawable(surface, dp(20), 0x22888888)
             addView(voiceStatusText)
             addView(voiceTranscriptText)
+            addView(voiceTaskText)
+            addView(voiceResultText)
             addView(voiceActions)
             voiceSurface = this
         }
@@ -488,8 +514,23 @@ class OverlayController(
             state.error?.takeIf { it.isNotBlank() }?.let { append(" - ").append(it) }
         }
         voiceTranscriptText?.text = state.transcript.ifBlank { "Voice transcript will appear here." }
+        voiceTaskText?.text = buildString {
+            val task = state.currentPhoneTask
+            if (state.isPhoneTaskRunning && !task.isNullOrBlank()) {
+                append("Task: ").append(task)
+            } else if (state.queuedPhoneTasks > 0) {
+                append("Tasks queued.")
+            } else {
+                append("No phone task running.")
+            }
+            if (state.queuedPhoneTasks > 0) {
+                append(" Queued: ").append(state.queuedPhoneTasks)
+            }
+        }
+        voiceResultText?.text = state.latestTaskResult ?: "Latest task result will appear here."
         voiceMuteButton?.text = if (state.isMuted) "Unmute" else "Mute"
         voiceMuteButton?.isEnabled = state.isActive
+        voiceCancelTaskButton?.isEnabled = state.isPhoneTaskRunning || state.queuedPhoneTasks > 0
         voiceHangupButton?.isEnabled = state.isActive || state.status == VoiceRuntimeStatus.ERROR
     }
 
