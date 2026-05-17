@@ -29,7 +29,7 @@ The bridge exposes:
 
 Open `android/` in Android Studio or run Gradle from that directory. Install the app on the device, then:
 
-1. Save the WebSocket URL, device ID, and token.
+1. Save the WebSocket URL, device ID, token, and OpenAI API key if you want realtime voice or composer transcription.
 2. Grant overlay permission.
 3. If Android shows **Restricted setting**, open **Settings > Apps > Android Agent**, use the three-dot menu, choose **Allow restricted settings**, and authenticate.
 4. Enable **Settings > Accessibility > Installed apps > Android Agent**.
