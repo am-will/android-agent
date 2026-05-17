@@ -5,16 +5,20 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.method.ScrollingMovementMethod
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -43,7 +47,6 @@ class OverlayController(
     private val onStartVoice: () -> Unit,
     private val onToggleVoiceMute: () -> Unit,
     private val onStopVoice: () -> Unit,
-    private val onCancelVoiceTask: () -> Unit,
     private val onStartTranscription: () -> Unit,
     private val onStopTranscription: () -> Unit,
     private val onCancelTranscription: () -> Unit
@@ -54,6 +57,7 @@ class OverlayController(
     private val trashHideInterpolator = AccelerateInterpolator()
     private var bubbleView: View? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
+    private var bubblePulseAnimator: AnimatorSet? = null
     private var lastBubbleX: Int? = null
     private var lastBubbleY: Int? = null
     private var panelView: View? = null
@@ -72,7 +76,6 @@ class OverlayController(
     private var voiceResultText: TextView? = null
     private var voiceMuteButton: Button? = null
     private var voiceHangupButton: Button? = null
-    private var voiceCancelTaskButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
     private var composerInput: EditText? = null
     private var transcriptionMicButton: ImageButton? = null
@@ -81,6 +84,17 @@ class OverlayController(
     private var automationSuppressionDepth = 0
     private var restoreBubbleAfterAutomation = false
 
+    private data class OverlayPalette(
+        val surface: Int,
+        val recessedSurface: Int,
+        val controlSurface: Int,
+        val primaryText: Int,
+        val secondaryText: Int,
+        val border: Int,
+        val highlight: Int,
+        val accent: Int
+    )
+
     fun show() {
         if (!Settings.canDrawOverlays(context) || bubbleView != null || automationSuppressionDepth > 0) {
             return
@@ -88,13 +102,13 @@ class OverlayController(
         val bubble = ImageButton(context).apply {
             setImageResource(R.drawable.codex_bubble_logo)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            background = roundedDrawable(Color.TRANSPARENT, dp(18))
+            background = bubbleBackgroundForVoiceState(lastVoiceState)
             contentDescription = "Android Agent"
             elevation = dp(8).toFloat()
-            setPadding(0, 0, 0, 0)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
             setOnClickListener { togglePanel() }
         }
-        val params = overlayParams(width = dp(64), height = dp(64), focusable = false).apply {
+        val params = overlayParams(width = dp(76), height = dp(76), focusable = false).apply {
             gravity = Gravity.TOP or Gravity.START
             x = lastBubbleX ?: dp(16)
             y = lastBubbleY ?: dp(160)
@@ -118,12 +132,14 @@ class OverlayController(
         windowManager.addView(bubble, params)
         bubbleView = bubble
         bubbleParams = params
+        applyBubbleVoiceIndicator(lastVoiceState)
     }
 
     fun hide() {
         automationSuppressionDepth = 0
         restoreBubbleAfterAutomation = false
         rememberBubblePosition()
+        stopBubblePulse()
         bubbleView?.let { windowManager.removeView(it) }
         removeTrashTarget()
         dismissPanel()
@@ -143,6 +159,7 @@ class OverlayController(
         // Automation suppression only clears our chrome; it must not stop turns,
         // hang up voice, or dismiss the foreground service.
         dismissPanel(cancelTranscription = false)
+        stopBubblePulse()
         bubbleView?.let {
             it.animate().cancel()
             it.animate().setListener(null)
@@ -295,24 +312,22 @@ class OverlayController(
             return
         }
 
-        val surface = themeColor(android.R.attr.colorBackground, 0xFFFFFFFF.toInt())
-        val primaryText = themeColor(android.R.attr.textColorPrimary, 0xFF111111.toInt())
-        val secondaryText = themeColor(android.R.attr.textColorSecondary, 0xFF666666.toInt())
-        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
+        val palette = overlayPalette()
 
         val input = EditText(context).apply {
             hint = "Ask Codex to control this phone"
             minLines = 1
             maxLines = 4
-            setTextColor(primaryText)
-            setHintTextColor(secondaryText)
-            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+            textSize = 14f
+            setTextColor(palette.primaryText)
+            setHintTextColor(palette.secondaryText)
+            background = controlDrawable(palette)
+            setPadding(dp(15), dp(11), dp(15), dp(11))
         }
         composerInput = input
         transcriptionMicButton = ImageButton(context).apply {
             setImageResource(R.drawable.ic_mic)
-            background = roundedDrawable(accent, dp(18))
+            background = accentDrawable(palette, dp(18))
             contentDescription = "Start voice transcription"
             setColorFilter(Color.WHITE)
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -327,9 +342,10 @@ class OverlayController(
         transcriptionCancelButton = Button(context).apply {
             text = "Cancel"
             textSize = 11f
+            isAllCaps = false
             visibility = View.GONE
-            setTextColor(primaryText)
-            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            setTextColor(palette.primaryText)
+            background = controlDrawable(palette)
             setOnClickListener { onCancelTranscription() }
         }
         val composerRow = LinearLayout(context).apply {
@@ -346,7 +362,7 @@ class OverlayController(
         statusText = TextView(context).apply {
             text = "Connected. Ready for a new request."
             textSize = 12f
-            setTextColor(secondaryText)
+            setTextColor(palette.secondaryText)
             setPadding(0, dp(10), 0, 0)
         }
         val actionRow = LinearLayout(context).apply {
@@ -355,8 +371,9 @@ class OverlayController(
         }
         actionRow.addView(Button(context).apply {
             text = "Stop"
-            setTextColor(primaryText)
-            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            isAllCaps = false
+            setTextColor(palette.primaryText)
+            background = controlDrawable(palette)
             setOnClickListener {
                 onStop()
                 setStatus("Stop requested")
@@ -364,8 +381,9 @@ class OverlayController(
         }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(10) })
         actionRow.addView(Button(context).apply {
             text = "Send"
+            isAllCaps = false
             setTextColor(Color.WHITE)
-            background = roundedDrawable(accent, dp(18))
+            background = accentDrawable(palette, dp(18))
             setOnClickListener {
                 val text = input.text.toString().trim()
                 if (text.isNotEmpty()) {
@@ -379,15 +397,16 @@ class OverlayController(
 
         val title = TextView(context).apply {
             text = "Android Agent"
-            textSize = 16f
-            setTextColor(primaryText)
+            textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(palette.primaryText)
             gravity = Gravity.CENTER_VERTICAL
         }
         val settingsButton = ImageButton(context).apply {
             setImageResource(R.drawable.ic_settings_gear)
-            background = roundedDrawable(0x0F888888, dp(14), 0x22888888)
+            background = controlDrawable(palette, dp(14))
             contentDescription = "Open Android Agent settings"
-            setColorFilter(primaryText)
+            setColorFilter(palette.primaryText)
             setPadding(dp(8), dp(8), dp(8), dp(8))
             setOnClickListener {
                 dismissPanel()
@@ -397,8 +416,9 @@ class OverlayController(
         val micButton = Button(context).apply {
             text = "🗣️"
             textSize = 18f
+            isAllCaps = false
             setTextColor(Color.WHITE)
-            background = roundedDrawable(accent, dp(14))
+            background = accentDrawable(palette, dp(14))
             contentDescription = "Start realtime voice mode"
             setOnClickListener {
                 onStartVoice()
@@ -413,12 +433,12 @@ class OverlayController(
             addView(micButton, LinearLayout.LayoutParams(dp(56), dp(36)).apply { rightMargin = dp(8) })
             addView(settingsButton, LinearLayout.LayoutParams(dp(36), dp(36)))
         }
-        val voice = buildVoiceSurface(surface, primaryText, secondaryText, accent)
+        val voice = buildVoiceSurface(palette)
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(14))
-            background = roundedDrawable(surface, dp(24), 0x1F888888)
-            elevation = dp(12).toFloat()
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = recessedPanelDrawable(palette)
+            elevation = dp(18).toFloat()
             addView(header)
             addView(voice)
             addView(composerRow, LinearLayout.LayoutParams(
@@ -483,59 +503,58 @@ class OverlayController(
         voiceResultText = null
         voiceMuteButton = null
         voiceHangupButton = null
-        voiceCancelTaskButton = null
     }
 
-    private fun buildVoiceSurface(surface: Int, primaryText: Int, secondaryText: Int, accent: Int): LinearLayout {
+    private fun buildVoiceSurface(palette: OverlayPalette): LinearLayout {
         voiceStatusText = TextView(context).apply {
             textSize = 14f
-            setTextColor(primaryText)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(palette.primaryText)
         }
         voiceTranscriptText = TextView(context).apply {
             textSize = 13f
-            setTextColor(secondaryText)
+            setTextColor(palette.secondaryText)
             setPadding(0, dp(8), 0, dp(10))
+            maxHeight = maxTranscriptHeight()
+            movementMethod = ScrollingMovementMethod()
+            isVerticalScrollBarEnabled = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
         voiceTaskText = TextView(context).apply {
             textSize = 12f
-            setTextColor(secondaryText)
+            setTextColor(palette.secondaryText)
             setPadding(0, 0, 0, dp(8))
         }
         voiceResultText = TextView(context).apply {
             textSize = 12f
-            setTextColor(secondaryText)
+            setTextColor(palette.secondaryText)
             setPadding(0, 0, 0, dp(10))
         }
         voiceMuteButton = Button(context).apply {
             text = "Mute"
-            setTextColor(primaryText)
-            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            isAllCaps = false
+            setTextColor(palette.primaryText)
+            background = controlDrawable(palette)
             setOnClickListener { onToggleVoiceMute() }
-        }
-        voiceCancelTaskButton = Button(context).apply {
-            text = "Cancel task"
-            setTextColor(primaryText)
-            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
-            setOnClickListener { onCancelVoiceTask() }
         }
         voiceHangupButton = Button(context).apply {
             text = "Hang up"
+            isAllCaps = false
             setTextColor(Color.WHITE)
-            background = roundedDrawable(accent, dp(18))
+            background = accentDrawable(palette, dp(18))
             setOnClickListener { onStopVoice() }
         }
         val voiceActions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
             addView(voiceMuteButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
-            addView(voiceCancelTaskButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
             addView(voiceHangupButton, LinearLayout.LayoutParams(0, dp(40), 1f))
         }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = roundedDrawable(surface, dp(20), 0x22888888)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = recessedInsetDrawable(palette, dp(20))
             addView(voiceStatusText)
             addView(voiceTranscriptText)
             addView(voiceTaskText)
@@ -553,6 +572,7 @@ class OverlayController(
     }
 
     private fun renderVoiceState(state: VoiceRuntimeState) {
+        applyBubbleVoiceIndicator(state)
         val shouldShow = state.isActive || state.status == VoiceRuntimeStatus.ERROR || state.transcript.isNotBlank()
         voiceSurface?.visibility = if (shouldShow) View.VISIBLE else View.GONE
         voiceStatusText?.text = buildString {
@@ -561,6 +581,16 @@ class OverlayController(
             state.error?.takeIf { it.isNotBlank() }?.let { append(" - ").append(it) }
         }
         voiceTranscriptText?.text = state.transcript.ifBlank { "Voice transcript will appear here." }
+        voiceTranscriptText?.post {
+            voiceTranscriptText?.let { textView ->
+                val scrollAmount = textView.layout?.let { layout ->
+                    layout.getLineTop(textView.lineCount) - textView.height + textView.compoundPaddingBottom + textView.compoundPaddingTop
+                } ?: 0
+                if (scrollAmount > 0) {
+                    textView.scrollTo(0, scrollAmount)
+                }
+            }
+        }
         voiceTaskText?.text = buildString {
             val task = state.currentPhoneTask
             if (state.isPhoneTaskRunning && !task.isNullOrBlank()) {
@@ -577,13 +607,12 @@ class OverlayController(
         voiceResultText?.text = state.latestTaskResult ?: "Latest task result will appear here."
         voiceMuteButton?.text = if (state.isMuted) "Unmute" else "Mute"
         voiceMuteButton?.isEnabled = state.isActive
-        voiceCancelTaskButton?.isEnabled = state.isPhoneTaskRunning || state.queuedPhoneTasks > 0
-        voiceHangupButton?.isEnabled = state.isActive || state.status == VoiceRuntimeStatus.ERROR
+        voiceHangupButton?.isEnabled = state.isActive
     }
 
     private fun renderTranscriptionState(state: VoiceTranscriptionState) {
-        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
-        val disabledBackground = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+        val palette = overlayPalette()
+        val disabledBackground = controlDrawable(palette)
 
         transcriptionMicButton?.apply {
             isEnabled = !state.isTranscribing
@@ -592,7 +621,7 @@ class OverlayController(
                 state.isTranscribing -> "Transcribing audio"
                 else -> "Start voice transcription"
             }
-            background = if (state.isTranscribing) disabledBackground else roundedDrawable(accent, dp(18))
+            background = if (state.isTranscribing) disabledBackground else accentDrawable(palette, dp(18))
             setColorFilter(Color.WHITE)
         }
         transcriptionCancelButton?.visibility = if (state.isRecording) View.VISIBLE else View.GONE
@@ -605,6 +634,80 @@ class OverlayController(
                 setStatus("Recording for transcription. Level $levelPercent%. Tap mic to stop, or Cancel to discard.")
             }
         }
+    }
+
+    private fun applyBubbleVoiceIndicator(state: VoiceRuntimeState) {
+        val bubble = bubbleView ?: return
+        bubble.background = bubbleBackgroundForVoiceState(state)
+        bubble.elevation = if (state.status == VoiceRuntimeStatus.IDLE) dp(8).toFloat() else dp(22).toFloat()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val shadowColor = when (state.status) {
+                VoiceRuntimeStatus.CONNECTING,
+                VoiceRuntimeStatus.ERROR -> VOICE_GLOW_RED
+                VoiceRuntimeStatus.LISTENING,
+                VoiceRuntimeStatus.THINKING,
+                VoiceRuntimeStatus.SPEAKING -> VOICE_GLOW_GREEN
+                VoiceRuntimeStatus.IDLE -> Color.TRANSPARENT
+            }
+            bubble.outlineAmbientShadowColor = shadowColor
+            bubble.outlineSpotShadowColor = shadowColor
+        }
+        updateBubblePulse(isSpeaking = state.status == VoiceRuntimeStatus.SPEAKING)
+    }
+
+    private fun bubbleBackgroundForVoiceState(state: VoiceRuntimeState): GradientDrawable {
+        return when (state.status) {
+            VoiceRuntimeStatus.CONNECTING,
+            VoiceRuntimeStatus.ERROR -> radialGlow(VOICE_GLOW_RED_CENTER, VOICE_GLOW_RED_MID)
+            VoiceRuntimeStatus.LISTENING,
+            VoiceRuntimeStatus.THINKING,
+            VoiceRuntimeStatus.SPEAKING -> radialGlow(VOICE_GLOW_GREEN_CENTER, VOICE_GLOW_GREEN_MID)
+            VoiceRuntimeStatus.IDLE -> roundedDrawable(Color.TRANSPARENT, dp(18))
+        }
+    }
+
+    private fun radialGlow(centerColor: Int, midColor: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            setGradientCenter(0.5f, 0.5f)
+            setGradientRadius(dp(38).toFloat())
+            colors = intArrayOf(centerColor, midColor, Color.TRANSPARENT)
+        }
+    }
+
+    private fun updateBubblePulse(isSpeaking: Boolean) {
+        val bubble = bubbleView
+        if (!isSpeaking || bubble == null) {
+            stopBubblePulse()
+            bubble?.scaleX = 1f
+            bubble?.scaleY = 1f
+            return
+        }
+        if (bubblePulseAnimator?.isStarted == true) {
+            return
+        }
+        val scaleX = ObjectAnimator.ofFloat(bubble, View.SCALE_X, 1f, 1.08f).apply {
+            duration = VOICE_PULSE_MS
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            interpolator = trashShowInterpolator
+        }
+        val scaleY = ObjectAnimator.ofFloat(bubble, View.SCALE_Y, 1f, 1.08f).apply {
+            duration = VOICE_PULSE_MS
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            interpolator = trashShowInterpolator
+        }
+        bubblePulseAnimator = AnimatorSet().apply {
+            playTogether(scaleX, scaleY)
+            start()
+        }
+    }
+
+    private fun stopBubblePulse() {
+        bubblePulseAnimator?.cancel()
+        bubblePulseAnimator = null
     }
 
     private fun dismissConfirmation() {
@@ -717,6 +820,7 @@ class OverlayController(
         if (isDismissAnimating) {
             return
         }
+        stopBubblePulse()
         val target = trashTargetView
         isDismissAnimating = true
         listOfNotNull(bubble, target).forEach { view ->
@@ -807,6 +911,11 @@ class OverlayController(
 
     private fun trashTargetSize(): Int = dp(64)
 
+    private fun maxTranscriptHeight(): Int {
+        val modalBudget = (context.resources.displayMetrics.heightPixels * VOICE_MODAL_MAX_SCREEN_FRACTION).toInt()
+        return (modalBudget - dp(220)).coerceAtLeast(dp(96))
+    }
+
     private fun rememberBubblePosition() {
         bubbleParams?.let {
             lastBubbleX = it.x
@@ -820,6 +929,14 @@ class OverlayController(
         private const val TRASH_TARGET_PULSE_MS = 55L
         private const val TRASH_TARGET_SHRINK_MS = 140L
         private const val TRASH_TARGET_HIDDEN_SCALE = 0.82f
+        private const val VOICE_PULSE_MS = 720L
+        private const val VOICE_MODAL_MAX_SCREEN_FRACTION = 0.40f
+        private const val VOICE_GLOW_RED = 0xFFE53935.toInt()
+        private const val VOICE_GLOW_RED_CENTER = 0xF2E53935.toInt()
+        private const val VOICE_GLOW_RED_MID = 0x99E53935.toInt()
+        private const val VOICE_GLOW_GREEN = 0xFF43A047.toInt()
+        private const val VOICE_GLOW_GREEN_CENTER = 0xF243A047.toInt()
+        private const val VOICE_GLOW_GREEN_MID = 0x9943A047.toInt()
     }
 
     private fun openSettings() {
@@ -942,11 +1059,71 @@ class OverlayController(
         }
     }
 
-    private fun roundedDrawable(color: Int, radius: Int, strokeColor: Int? = null): GradientDrawable {
+    private fun overlayPalette(): OverlayPalette {
+        val isDark = isNightMode()
+        val baseSurface = themeColor(
+            android.R.attr.colorBackground,
+            if (isDark) 0xFF121318.toInt() else 0xFFF8FAFC.toInt()
+        )
+        val primaryText = themeColor(
+            android.R.attr.textColorPrimary,
+            if (isDark) 0xFFEDEFF5.toInt() else 0xFF111827.toInt()
+        )
+        val secondaryText = themeColor(
+            android.R.attr.textColorSecondary,
+            if (isDark) 0xFFAAB0BD.toInt() else 0xFF64748B.toInt()
+        )
+        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
+        val surface = if (isDark) blend(baseSurface, Color.WHITE, 0.08f) else blend(baseSurface, accent, 0.035f)
+        return OverlayPalette(
+            surface = surface,
+            recessedSurface = if (isDark) blend(surface, Color.BLACK, 0.24f) else blend(surface, Color.BLACK, 0.045f),
+            controlSurface = if (isDark) blend(surface, Color.WHITE, 0.07f) else withAlpha(Color.WHITE, 0xEE),
+            primaryText = primaryText,
+            secondaryText = secondaryText,
+            border = if (isDark) withAlpha(Color.WHITE, 0x2E) else withAlpha(Color.BLACK, 0x1C),
+            highlight = if (isDark) withAlpha(Color.WHITE, 0x34) else withAlpha(Color.WHITE, 0xCC),
+            accent = accent
+        )
+    }
+
+    private fun recessedPanelDrawable(palette: OverlayPalette): LayerDrawable {
+        return LayerDrawable(
+            arrayOf(
+                roundedDrawable(palette.recessedSurface, dp(28)),
+                roundedDrawable(palette.surface, dp(26), palette.highlight),
+                roundedDrawable(Color.TRANSPARENT, dp(26), palette.border)
+            )
+        ).apply {
+            setLayerInset(1, dp(1), dp(1), dp(1), dp(2))
+            setLayerInset(2, dp(1), dp(1), dp(1), dp(2))
+        }
+    }
+
+    private fun recessedInsetDrawable(palette: OverlayPalette, radius: Int): LayerDrawable {
+        return LayerDrawable(
+            arrayOf(
+                roundedDrawable(palette.recessedSurface, radius, palette.border),
+                roundedDrawable(blend(palette.recessedSurface, palette.surface, 0.42f), radius - dp(2))
+            )
+        ).apply {
+            setLayerInset(1, dp(1), dp(1), dp(1), dp(1))
+        }
+    }
+
+    private fun controlDrawable(palette: OverlayPalette, radius: Int = dp(18)): GradientDrawable {
+        return roundedDrawable(palette.controlSurface, radius, palette.border)
+    }
+
+    private fun accentDrawable(palette: OverlayPalette, radius: Int): GradientDrawable {
+        return roundedDrawable(palette.accent, radius, withAlpha(Color.WHITE, 0x33))
+    }
+
+    private fun roundedDrawable(color: Int, radius: Int, strokeColor: Int? = null, strokeWidth: Int = 1): GradientDrawable {
         return GradientDrawable().apply {
             setColor(color)
             cornerRadius = radius.toFloat()
-            strokeColor?.let { setStroke(1, it) }
+            strokeColor?.let { setStroke(strokeWidth, it) }
         }
     }
 
@@ -961,5 +1138,24 @@ class OverlayController(
         } else {
             fallback
         }
+    }
+
+    private fun isNightMode(): Boolean {
+        return (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int {
+        return (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
+    }
+
+    private fun blend(start: Int, end: Int, fraction: Float): Int {
+        val amount = fraction.coerceIn(0f, 1f)
+        val inverse = 1f - amount
+        return Color.argb(
+            (Color.alpha(start) * inverse + Color.alpha(end) * amount).toInt(),
+            (Color.red(start) * inverse + Color.red(end) * amount).toInt(),
+            (Color.green(start) * inverse + Color.green(end) * amount).toInt(),
+            (Color.blue(start) * inverse + Color.blue(end) * amount).toInt()
+        )
     }
 }

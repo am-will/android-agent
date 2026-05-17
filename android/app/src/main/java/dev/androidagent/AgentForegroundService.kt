@@ -54,7 +54,6 @@ class AgentForegroundService : Service() {
             },
             onToggleVoiceMute = { voiceRuntimeController?.toggleMute() },
             onStopVoice = { voiceRuntimeController?.stopFromUi() },
-            onCancelVoiceTask = { requestStopTurn("Cancelled from Android voice UI") },
             onStartTranscription = { startComposerTranscription() },
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() }
