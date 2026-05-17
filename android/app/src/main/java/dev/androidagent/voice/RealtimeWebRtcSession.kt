@@ -20,6 +20,8 @@ import org.webrtc.SessionDescription
 import org.webrtc.SdpObserver
 import org.webrtc.audio.AudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule
+import org.json.JSONObject
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -100,6 +102,15 @@ class RealtimeWebRtcSession(
 
     fun setMuted(muted: Boolean) {
         audioTrack?.setEnabled(!muted)
+    }
+
+    fun sendJsonEvent(event: JSONObject): Boolean {
+        val channel = eventsChannel ?: return false
+        if (channel.state() != DataChannel.State.OPEN) {
+            return false
+        }
+        val bytes = event.toString().toByteArray(StandardCharsets.UTF_8)
+        return channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
     }
 
     fun close() {

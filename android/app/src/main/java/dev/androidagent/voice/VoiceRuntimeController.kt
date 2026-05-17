@@ -38,10 +38,13 @@ class VoiceRuntimeController(
     private val sendStart: (sdp: String, config: AgentConfig) -> Unit,
     private val sendStop: (reason: String) -> Unit,
     private val sendUserPrompt: (text: String, config: AgentConfig) -> Unit,
+    private val sendToolCall: (RealtimeToolCall) -> Unit = {},
     private val onStateChanged: (VoiceRuntimeState) -> Unit
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val transcriptNormalizer = RealtimeTranscriptNormalizer()
+    private val toolCallAccumulator = RealtimeToolCallAccumulator()
+    private val toolOutputsSent = mutableSetOf<String>()
     private var session: RealtimeWebRtcSession? = null
     private var state = VoiceRuntimeState()
 
@@ -68,6 +71,8 @@ class VoiceRuntimeController(
         )
         session = nextSession
         transcriptNormalizer.reset()
+        toolCallAccumulator.reset()
+        toolOutputsSent.clear()
         updateState(VoiceRuntimeState(status = VoiceRuntimeStatus.CONNECTING))
 
         scope.launch {
@@ -172,6 +177,38 @@ class VoiceRuntimeController(
         }
     }
 
+    fun onRealtimeToolResult(payload: JSONObject) {
+        scope.launch {
+            val callId = payload.optString("callId").ifBlank { payload.optString("call_id") }
+            if (callId.isBlank() || !toolOutputsSent.add(callId)) {
+                return@launch
+            }
+            val output = JSONObject()
+                .put("ok", payload.optBoolean("ok", false))
+                .put("status", payload.optString("status").ifBlank { if (payload.optBoolean("ok", false)) "completed" else "failed" })
+            payload.optString("output").takeIf { it.isNotBlank() }?.let { output.put("output", it) }
+            payload.optString("error").takeIf { it.isNotBlank() }?.let { output.put("error", it) }
+
+            val sentOutput = session?.sendJsonEvent(
+                JSONObject()
+                    .put("type", "conversation.item.create")
+                    .put(
+                        "item",
+                        JSONObject()
+                            .put("type", "function_call_output")
+                            .put("call_id", callId)
+                            .put("output", output.toString())
+                    )
+            ) == true
+            if (sentOutput) {
+                session?.sendJsonEvent(JSONObject().put("type", "response.create"))
+                updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null))
+            } else {
+                updateState(state.copy(error = "Could not send realtime tool output."))
+            }
+        }
+    }
+
     private fun handleDataChannelEvent(raw: String) {
         val event = runCatching { JSONObject(raw) }.getOrNull() ?: return
         val type = event.optString("type")
@@ -179,6 +216,11 @@ class VoiceRuntimeController(
             return
         }
         scope.launch {
+            toolCallAccumulator.apply(event)?.let { call ->
+                sendToolCall(call)
+                updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null))
+                return@launch
+            }
             when {
                 type.contains("error") -> showBackendError(event.optString("message").ifBlank { event.optString("error").ifBlank { "Realtime voice failed." } })
                 type == "input_audio_buffer.speech_started" -> {
