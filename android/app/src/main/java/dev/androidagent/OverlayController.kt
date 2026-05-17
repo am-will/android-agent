@@ -617,7 +617,7 @@ class OverlayController(
         voiceResultText?.text = state.latestTaskResult ?: "Latest task result will appear here."
         voiceMuteButton?.text = if (state.isMuted) "Unmute" else "Mute"
         voiceMuteButton?.isEnabled = state.isActive
-        voiceHangupButton?.isEnabled = state.isActive
+        voiceHangupButton?.isEnabled = state.status != VoiceRuntimeStatus.IDLE
     }
 
     private fun renderTranscriptionState(state: VoiceTranscriptionState) {

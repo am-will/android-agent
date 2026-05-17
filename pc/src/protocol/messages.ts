@@ -169,6 +169,7 @@ export interface RealtimeToolResultMessage {
   output?: string;
   error?: string;
   status: "completed" | "failed" | "timeout" | "cancelled";
+  createResponse?: boolean;
 }
 
 export interface RealtimeTaskStatusMessage {

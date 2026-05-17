@@ -41,7 +41,6 @@ class VoiceRuntimeController(
     private val context: Context,
     private val sendStart: (sdp: String, config: AgentConfig) -> Unit,
     private val sendStop: (reason: String) -> Unit,
-    private val sendUserPrompt: (text: String, config: AgentConfig) -> Unit,
     private val sendToolCall: (RealtimeToolCall) -> Unit = {},
     private val onStateChanged: (VoiceRuntimeState) -> Unit
 ) {
@@ -51,6 +50,7 @@ class VoiceRuntimeController(
     private val toolOutputsSent = mutableSetOf<String>()
     private var session: RealtimeWebRtcSession? = null
     private var state = VoiceRuntimeState()
+    private var activeResponseId: String? = null
 
     fun start() {
         if (state.isActive || state.status == VoiceRuntimeStatus.CONNECTING) {
@@ -77,6 +77,7 @@ class VoiceRuntimeController(
         transcriptNormalizer.reset()
         toolCallAccumulator.reset()
         toolOutputsSent.clear()
+        activeResponseId = null
         updateState(VoiceRuntimeState(status = VoiceRuntimeStatus.CONNECTING))
 
         scope.launch {
@@ -103,10 +104,6 @@ class VoiceRuntimeController(
     }
 
     fun stopFromUi() {
-        val spokenPrompt = transcriptNormalizer.snapshot().userText.trim()
-        if (spokenPrompt.isNotBlank()) {
-            sendUserPrompt(spokenPrompt, AgentConfigStore.load(context))
-        }
         cleanup(sendBackendStop = true, reason = "Stopped from Android voice UI")
     }
 
@@ -190,8 +187,13 @@ class VoiceRuntimeController(
             val events = buildRealtimeToolOutputEvents(payload)
             val sentOutput = session?.sendJsonEvent(events[0]) == true
             if (sentOutput) {
-                session?.sendJsonEvent(events[1])
-                updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null, latestTaskResult = taskResultSummary(payload)))
+                events.drop(1).forEach { session?.sendJsonEvent(it) }
+                val nextStatus = if (payload.optBoolean("createResponse", true)) {
+                    VoiceRuntimeStatus.THINKING
+                } else {
+                    VoiceRuntimeStatus.LISTENING
+                }
+                updateState(state.copy(status = nextStatus, error = null, latestTaskResult = taskResultSummary(payload)))
             } else {
                 updateState(state.copy(error = "Could not send realtime tool output."))
             }
@@ -231,9 +233,11 @@ class VoiceRuntimeController(
                 )
                 return@launch
             }
+            trackResponseState(type, event)
             when {
                 type.contains("error") -> showBackendError(event.optString("message").ifBlank { event.optString("error").ifBlank { "Realtime voice failed." } })
                 type == "input_audio_buffer.speech_started" -> {
+                    cancelActiveResponseForBargeIn()
                     val transcript = transcriptNormalizer.applyEvent(type, event)
                     updateState(state.copy(status = VoiceRuntimeStatus.LISTENING, transcript = transcript.displayText, error = null))
                 }
@@ -249,6 +253,35 @@ class VoiceRuntimeController(
                 }
             }
         }
+    }
+
+    private fun trackResponseState(type: String, event: JSONObject) {
+        when (type) {
+            "response.created" -> {
+                activeResponseId = event.optJSONObject("response")?.optString("id")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: event.optString("response_id").takeIf { it.isNotBlank() }
+            }
+            "response.done" -> {
+                val responseId = event.optJSONObject("response")?.optString("id")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: event.optString("response_id").takeIf { it.isNotBlank() }
+                if (responseId == null || responseId == activeResponseId) {
+                    activeResponseId = null
+                }
+            }
+        }
+    }
+
+    private fun cancelActiveResponseForBargeIn() {
+        val responseId = activeResponseId ?: return
+        session?.sendJsonEvent(
+            JSONObject()
+                .put("type", "response.cancel")
+                .put("response_id", responseId)
+        )
+        session?.sendJsonEvent(JSONObject().put("type", "output_audio_buffer.clear"))
+        activeResponseId = null
     }
 
     private fun handleConnectionState(connectionState: String) {
@@ -295,9 +328,10 @@ class VoiceRuntimeController(
     }
 
     private fun cleanup(sendBackendStop: Boolean, reason: String = "Voice session stopped") {
-        val hadSession = session != null || state.isActive
+        val hadSession = session != null || state.status != VoiceRuntimeStatus.IDLE
         session?.close()
         session = null
+        activeResponseId = null
         if (sendBackendStop && hadSession) {
             sendStop(reason)
         }

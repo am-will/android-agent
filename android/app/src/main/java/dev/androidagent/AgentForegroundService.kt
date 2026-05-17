@@ -61,8 +61,10 @@ class AgentForegroundService : Service() {
         voiceRuntimeController = VoiceRuntimeController(
             context = this,
             sendStart = { sdp, config -> webSocketClient?.sendRealtimeStart(sdp, config) },
-            sendStop = { reason -> webSocketClient?.sendRealtimeStop(reason) },
-            sendUserPrompt = { text, config -> webSocketClient?.sendUserRequest(text, config) },
+            sendStop = { reason ->
+                webSocketClient?.sendRealtimeStop(reason)
+                webSocketClient?.sendStopRequest(reason)
+            },
             sendToolCall = { call -> webSocketClient?.sendRealtimeToolCall(call, AgentConfigStore.load(this)) },
             onStateChanged = { state -> overlayController?.setVoiceState(state) }
         )

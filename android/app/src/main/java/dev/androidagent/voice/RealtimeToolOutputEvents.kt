@@ -13,7 +13,7 @@ fun buildRealtimeToolOutputEvents(payload: JSONObject): List<JSONObject> {
     payload.optString("output").takeIf { it.isNotBlank() }?.let { output.put("output", it) }
     payload.optString("error").takeIf { it.isNotBlank() }?.let { output.put("error", it) }
 
-    return listOf(
+    val events = mutableListOf(
         JSONObject()
             .put("type", "conversation.item.create")
             .put(
@@ -22,7 +22,10 @@ fun buildRealtimeToolOutputEvents(payload: JSONObject): List<JSONObject> {
                     .put("type", "function_call_output")
                     .put("call_id", callId)
                     .put("output", output.toString())
-            ),
-        JSONObject().put("type", "response.create")
+            )
     )
+    if (payload.optBoolean("createResponse", true)) {
+        events.add(JSONObject().put("type", "response.create"))
+    }
+    return events
 }

@@ -189,6 +189,7 @@ test("stop_phone_task cancels active and queued realtime phone tasks", async () 
   assert.equal(results(messages).find((message) => message.callId === "call_1")?.status, "cancelled");
   assert.equal(results(messages).find((message) => message.callId === "call_2")?.status, "cancelled");
   assert.equal(results(messages).find((message) => message.callId === "call_stop")?.status, "completed");
+  assert.equal(results(messages).find((message) => message.callId === "call_stop")?.createResponse, false);
 
   first.resolve({ finalMessage: "Settings opened late" });
 });
@@ -203,8 +204,20 @@ test("steer_phone_task injects guidance into active turn", async () => {
 
   assert.deepEqual(dispatcher.steers, ["Actually open Bluetooth settings."]);
   assert.equal(results(messages).find((message) => message.callId === "call_steer")?.status, "completed");
+  assert.equal(results(messages).find((message) => message.callId === "call_steer")?.createResponse, false);
 
   first.resolve({ finalMessage: "Settings opened" });
+});
+
+test("steer_phone_task becomes a normal phone task when no turn is active", async () => {
+  const { dispatcher, manager, messages } = createHarness();
+
+  await manager.handleToolCall(namedToolCall("call_steer", "steer_phone_task", { guidance: "Open the first video on this screen." }));
+  await waitFor(() => results(messages).some((message) => message.callId === "call_steer"));
+
+  assert.deepEqual(dispatcher.requests, ["Open the first video on this screen."]);
+  assert.deepEqual(dispatcher.steers, []);
+  assert.equal(results(messages).find((message) => message.callId === "call_steer")?.status, "completed");
 });
 
 test("web_search returns search output without starting a phone task", async () => {

@@ -130,7 +130,8 @@ export class RealtimeTaskManager {
       callId: message.callId,
       ok: true,
       status: "completed",
-      output: "Stopped the active phone task and cleared queued realtime phone tasks."
+      output: "Stopped the active phone task and cleared queued realtime phone tasks.",
+      createResponse: false
     });
   }
 
@@ -148,13 +149,28 @@ export class RealtimeTaskManager {
       return;
     }
 
+    const state = this.stateFor(message.deviceId);
+    if (!state.active) {
+      const task: QueuedTask = {
+        deviceId: message.deviceId,
+        callId: message.callId,
+        instruction: guidance,
+        urgency: "normal"
+      };
+      state.queue.unshift(task);
+      this.sendStatus(message.deviceId);
+      this.processNext(message.deviceId);
+      return;
+    }
+
     try {
       await this.options.dispatcher.steerActiveTurn(message.deviceId, guidance);
       this.sendResult(message.deviceId, {
         callId: message.callId,
         ok: true,
         status: "completed",
-        output: "Steered the active phone task."
+        output: "Steered the active phone task.",
+        createResponse: false
       });
       this.sendStatus(message.deviceId);
     } catch (error) {
