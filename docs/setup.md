@@ -5,7 +5,8 @@
 Requirements:
 
 - Node.js 24+
-- Codex CLI with `codex app-server`
+- An installed Open Claw session on the remote PC for the target dispatcher path
+- Codex CLI with `codex app-server` only if exercising the copied legacy dispatcher before the Open Claw adapter lands
 - Same network reachability from phone to PC
 - Gradle or Android Studio for Android builds
 
@@ -23,7 +24,9 @@ The bridge exposes:
 
 - `ws://0.0.0.0:8787/phone` for Android
 - `http://127.0.0.1:8787/health` for local status
-- `POST http://127.0.0.1:8787/api/phone/default/command` for the MCP server
+- `POST http://127.0.0.1:8787/api/phone/default/command` for local phone-tool adapters
+
+The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime tool calls are queued as phone tasks. The current queue still targets the legacy Codex dispatcher until the Open Claw adapter replaces it.
 
 ## Android
 

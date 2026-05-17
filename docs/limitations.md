@@ -8,4 +8,5 @@
 - Text input relies on `ACTION_SET_TEXT`, which some custom controls may reject.
 - App-name launch matching is fuzzy. Prefer `packageName` for reliable automation.
 - The bridge uses a shared token suitable for a local prototype, not production auth.
-- Codex app-server protocol may change by installed version. Generate schemas with `npm run codex:schemas` when needed.
+- The current copied dispatcher depends on Codex app-server protocol details that may change by installed version. Generate schemas with `npm run codex:schemas` while that legacy path remains.
+- The Open Claw session adapter is not implemented yet; until it lands, text requests and realtime `run_phone_task` calls still use the legacy dispatcher or fallback path.

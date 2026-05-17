@@ -1,4 +1,6 @@
-# Codex App-Server Dispatcher
+# Legacy Codex App-Server Dispatcher
+
+This document describes the copied dispatcher that is still present in the prototype. It is useful for understanding current behavior and fallback testing, but Open Claw Agent's target architecture is to replace this path with an adapter that talks to an installed Open Claw session on the remote PC. See `docs/open-claw-migration-plan.md`.
 
 The dispatcher starts Codex app-server with:
 

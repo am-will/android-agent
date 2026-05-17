@@ -77,7 +77,7 @@ Coordinate taps use full-screen pixels, including the status and navigation bars
   "type": "agent_status",
   "deviceId": "pixel",
   "status": "working",
-  "text": "Codex started working"
+  "text": "Agent started working"
 }
 ```
 
@@ -187,9 +187,9 @@ Use `run_phone_task` for new actionable phone tasks:
 }
 ```
 
-The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and runs the instruction through the existing Codex phone-agent dispatcher. Only one task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active Codex turn before starting the new task.
+The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and runs the instruction through the active phone-task dispatcher. Only one task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active task before starting the new task. Today the dispatcher is the copied Codex app-server client; the target dispatcher is an Open Claw session adapter.
 
-Use `steer_phone_task` when the user corrects or adds information while a phone task is running. The bridge injects the guidance into the active Codex turn with `turn/steer`:
+Use `steer_phone_task` when the user corrects or adds information while a phone task is running. The bridge injects the guidance into the active task using the current dispatcher adapter:
 
 ```json
 {
@@ -203,7 +203,7 @@ Use `steer_phone_task` when the user corrects or adds information while a phone 
 }
 ```
 
-Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the phone as-is. The bridge cancels queued realtime tasks, rejects pending phone commands, and interrupts the active Codex turn:
+Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the phone as-is. The bridge cancels queued realtime tasks, rejects pending phone commands, and interrupts the active dispatcher task:
 
 ```json
 {
@@ -294,8 +294,8 @@ Use these checks after starting the PC bridge and Android bubble:
 2. Verify Realtime gives a short spoken acknowledgement and does not hang up.
 3. Verify the Android voice panel shows the active task and queued count.
 4. While the task is running, speak another actionable instruction and verify it queues, or use an explicit interrupt instruction and verify the active task is cancelled.
-5. After the first task changes phone state, say a follow-up such as “Message Alice…” and verify Codex acts from the current screen.
-6. Verify risky actions still trigger the existing Android/Codex confirmation flow before proceeding.
+5. After the first task changes phone state, say a follow-up such as “Message Alice…” and verify the active dispatcher acts from the current screen.
+6. Verify risky actions still trigger the Android confirmation flow before proceeding.
 
 ### Stop, Errors, And Close
 

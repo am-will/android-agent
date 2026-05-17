@@ -1,8 +1,8 @@
 # Safety
 
-The dispatcher prepends a safety policy to each request sent to Codex.
+The dispatcher prepends a safety policy to each phone-control task before it reaches the active desktop agent session. The copied implementation sends that policy to Codex app-server; the target implementation must send the same policy to Open Claw.
 
-Codex must call `phone_ask_user_confirmation` before:
+The active session adapter must call `phone_ask_user_confirmation` before:
 
 - Purchases or final order placement
 - Payments or money movement

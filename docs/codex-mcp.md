@@ -1,4 +1,6 @@
-# Codex MCP Configuration
+# Legacy Codex MCP Configuration
+
+This configuration is for the copied Codex app-server compatibility path. Keep it working until the Open Claw session adapter can expose the same phone-control tools, but do not treat Codex as the long-term product dependency.
 
 Run the PC bridge first:
 
