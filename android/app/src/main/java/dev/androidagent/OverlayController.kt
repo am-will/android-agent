@@ -1,5 +1,7 @@
 package dev.androidagent
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -16,6 +18,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -37,6 +41,8 @@ class OverlayController(
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val trashShowInterpolator = DecelerateInterpolator()
+    private val trashHideInterpolator = AccelerateInterpolator()
     private var bubbleView: View? = null
     private var panelView: View? = null
     private var panelScrimView: View? = null
@@ -420,7 +426,10 @@ class OverlayController(
             background = trashTargetBackground(isActive = false)
             contentDescription = "Close Android Agent bubble"
             elevation = dp(12).toFloat()
-            setPadding(dp(18), dp(18), dp(18), dp(18))
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            alpha = 0f
+            scaleX = TRASH_TARGET_HIDDEN_SCALE
+            scaleY = TRASH_TARGET_HIDDEN_SCALE
             visibility = View.INVISIBLE
         }
         val params = overlayParams(width = size, height = size, focusable = false).apply {
@@ -436,8 +445,20 @@ class OverlayController(
     private fun showTrashTarget() {
         ensureTrashTarget()
         trashTargetView?.apply {
+            animate().cancel()
+            animate().setListener(null)
             background = trashTargetBackground(isActive = false)
+            alpha = 0f
+            scaleX = TRASH_TARGET_HIDDEN_SCALE
+            scaleY = TRASH_TARGET_HIDDEN_SCALE
             visibility = View.VISIBLE
+            animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(TRASH_TARGET_SHOW_MS)
+                .setInterpolator(trashShowInterpolator)
+                .start()
             post { updateTrashTargetBounds() }
         }
         isBubbleOverTrashTarget = false
@@ -445,14 +466,31 @@ class OverlayController(
 
     private fun hideTrashTarget() {
         trashTargetView?.apply {
-            visibility = View.INVISIBLE
+            animate().cancel()
             background = trashTargetBackground(isActive = false)
+            animate()
+                .alpha(0f)
+                .scaleX(TRASH_TARGET_HIDDEN_SCALE)
+                .scaleY(TRASH_TARGET_HIDDEN_SCALE)
+                .setDuration(TRASH_TARGET_HIDE_MS)
+                .setInterpolator(trashHideInterpolator)
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        visibility = View.INVISIBLE
+                        animate().setListener(null)
+                    }
+                })
+                .start()
         }
         isBubbleOverTrashTarget = false
     }
 
     private fun removeTrashTarget() {
-        trashTargetView?.let { windowManager.removeView(it) }
+        trashTargetView?.let {
+            it.animate().cancel()
+            it.animate().setListener(null)
+            windowManager.removeView(it)
+        }
         trashTargetView = null
         trashTargetBounds = Rect()
         isBubbleOverTrashTarget = false
@@ -499,7 +537,13 @@ class OverlayController(
         )
     }
 
-    private fun trashTargetSize(): Int = dp(72)
+    private fun trashTargetSize(): Int = dp(64)
+
+    companion object {
+        private const val TRASH_TARGET_SHOW_MS = 140L
+        private const val TRASH_TARGET_HIDE_MS = 110L
+        private const val TRASH_TARGET_HIDDEN_SCALE = 0.82f
+    }
 
     private fun openSettings() {
         context.startActivity(
