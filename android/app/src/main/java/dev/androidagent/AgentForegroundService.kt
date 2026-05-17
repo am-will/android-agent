@@ -39,6 +39,7 @@ class AgentForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        broadcastRunningState()
         createChannel()
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), foregroundServiceType(includeMicrophone = false))
         voiceTranscriptionManager = VoiceTranscriptionManager(onStateChanged = ::handleTranscriptionState)
@@ -87,6 +88,7 @@ class AgentForegroundService : Service() {
         webSocketClient?.close()
         overlayController?.hide()
         isRunning = false
+        broadcastRunningState()
         super.onDestroy()
     }
 
@@ -261,11 +263,21 @@ class AgentForegroundService : Service() {
             .build()
     }
 
+    private fun broadcastRunningState() {
+        sendBroadcast(
+            Intent(ACTION_STATE_CHANGED)
+                .setPackage(packageName)
+                .putExtra(EXTRA_IS_RUNNING, isRunning)
+        )
+    }
+
     companion object {
         private const val TAG = "AgentService"
         private const val ACTION_STOP_TURN = "dev.androidagent.action.STOP_TURN"
         private const val NOTIFICATION_ID = 1
         private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and phone bridge are running"
+        const val ACTION_STATE_CHANGED = "dev.androidagent.action.AGENT_SERVICE_STATE_CHANGED"
+        const val EXTRA_IS_RUNNING = "isRunning"
         const val CHANNEL_ID = "android-agent"
         var isRunning: Boolean = false
             private set

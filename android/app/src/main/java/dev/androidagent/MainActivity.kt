@@ -3,8 +3,11 @@ package dev.androidagent
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -13,6 +16,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -38,6 +43,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var endpointSummary: TextView
     private lateinit var statusText: TextView
     private val statusChips = mutableMapOf<String, TextView>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val serviceStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AgentForegroundService.ACTION_STATE_CHANGED) {
+                refreshStatus()
+            }
+        }
+    }
+    private var serviceStateReceiverRegistered = false
     private var systemPromptText: String = DefaultSystemPrompt.text
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,6 +63,22 @@ class MainActivity : ComponentActivity() {
         buildUi()
         maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        registerServiceStateReceiver()
+        refreshStatus()
+    }
+
+    override fun onStop() {
+        unregisterServiceStateReceiver()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -130,11 +160,11 @@ class MainActivity : ComponentActivity() {
                     this@MainActivity,
                     Intent(this@MainActivity, AgentForegroundService::class.java)
                 )
-                refreshStatus()
+                refreshStatusSoon()
             }, stackedParams(18))
             addView(actionButton("Stop Agent Bubble", ButtonTone.Secondary, palette) {
                 stopService(Intent(this@MainActivity, AgentForegroundService::class.java))
-                refreshStatus()
+                refreshStatusSoon()
             }, stackedParams(10))
             addView(actionButton("Grant Overlay Permission", ButtonTone.Secondary, palette) {
                 openOverlaySettings()
@@ -340,7 +370,32 @@ class MainActivity : ComponentActivity() {
                 this,
                 Intent(this, AgentForegroundService::class.java)
             )
+            refreshStatusSoon()
         }
+    }
+
+    private fun registerServiceStateReceiver() {
+        if (serviceStateReceiverRegistered) return
+
+        ContextCompat.registerReceiver(
+            this,
+            serviceStateReceiver,
+            IntentFilter(AgentForegroundService.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        serviceStateReceiverRegistered = true
+    }
+
+    private fun unregisterServiceStateReceiver() {
+        if (!serviceStateReceiverRegistered) return
+
+        unregisterReceiver(serviceStateReceiver)
+        serviceStateReceiverRegistered = false
+    }
+
+    private fun refreshStatusSoon() {
+        refreshStatus()
+        mainHandler.postDelayed({ refreshStatus() }, 150)
     }
 
     private fun isAccessibilityEnabled(): Boolean {
