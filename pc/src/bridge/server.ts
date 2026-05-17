@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import { AuditLog } from "./AuditLog.js";
 import { Dispatcher } from "../dispatcher/dispatcher.js";
 import { OpenAiRealtimeClient, type OpenAiRealtimeSession } from "./OpenAiRealtimeClient.js";
+import { RealtimeTaskManager } from "./RealtimeTaskManager.js";
 import {
   inboundPhoneMessageSchema,
   phoneCommandSchema,
@@ -19,6 +20,11 @@ const audit = new AuditLog();
 const hub = new PhoneHub(config.defaultDeviceId, audit);
 const dispatcher = new Dispatcher(hub, audit);
 const realtimeClient = new OpenAiRealtimeClient(config);
+const realtimeTaskManager = new RealtimeTaskManager({
+  dispatcher,
+  audit,
+  sendRealtime
+});
 
 const realtimeSessions = new Map<string, OpenAiRealtimeSession>();
 
@@ -247,7 +253,7 @@ wss.on("connection", (socket) => {
 
       if (message.type === "agent_control") {
         if (message.action === "stop") {
-          dispatcher.stopActiveTurn(message.deviceId, message.reason ?? "Stopped from Android").catch((error) => {
+          realtimeTaskManager.cancelDevice(message.deviceId, message.reason ?? "Stopped from Android").catch((error) => {
             hub.sendStatus(message.deviceId, {
               deviceId: message.deviceId,
               status: "error",
@@ -255,6 +261,17 @@ wss.on("connection", (socket) => {
             });
           });
         }
+        return;
+      }
+
+      if (message.type === "realtime.tool_call") {
+        if (message.deviceId !== deviceId) {
+          sendRealtimeError(deviceId, `realtime.tool_call deviceId ${message.deviceId} does not match registered device ${deviceId}`);
+          return;
+        }
+        realtimeTaskManager.handleToolCall(message).catch((error) => {
+          sendRealtimeError(message.deviceId, error instanceof Error ? error.message : String(error));
+        });
         return;
       }
 
@@ -293,6 +310,7 @@ wss.on("connection", (socket) => {
     const disconnectedDeviceId = deviceId;
     hub.unregister(socket);
     if (disconnectedDeviceId) {
+      realtimeTaskManager.failDevice(disconnectedDeviceId, "Phone WebSocket disconnected");
       const session = realtimeSessions.get(disconnectedDeviceId);
       if (session) {
         realtimeSessions.delete(disconnectedDeviceId);
