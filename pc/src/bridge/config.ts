@@ -18,7 +18,7 @@ export function getBridgeConfig(): BridgeConfig {
     defaultDeviceId: process.env.PHONE_AGENT_DEFAULT_DEVICE ?? "pixel",
     bridgeUrl: process.env.PHONE_AGENT_BRIDGE_URL ?? `http://127.0.0.1:${port}`,
     openAiApiKey: process.env.OPENAI_API_KEY,
-    openAiRealtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime",
+    openAiRealtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2",
     openAiRealtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "marin"
   };
 }
