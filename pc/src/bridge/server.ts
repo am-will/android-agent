@@ -2,10 +2,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer } from "ws";
 import { AuditLog } from "./AuditLog.js";
 import { Dispatcher } from "../dispatcher/dispatcher.js";
+import { CodexAppServerClient, type RealtimeEventSink } from "../dispatcher/CodexAppServerClient.js";
 import {
   inboundPhoneMessageSchema,
   phoneCommandSchema,
-  type PhoneCommandRequest
+  type PhoneCommandRequest,
+  type RealtimeOutboundMessage,
+  type RealtimeStartMessage,
+  type RealtimeStopMessage
 } from "../protocol/messages.js";
 import { getBridgeConfig } from "./config.js";
 import { PhoneHub } from "./PhoneHub.js";
@@ -14,6 +18,13 @@ const config = getBridgeConfig();
 const audit = new AuditLog();
 const hub = new PhoneHub(config.defaultDeviceId, audit);
 const dispatcher = new Dispatcher(hub, audit);
+const realtimeClient = new CodexAppServerClient(audit);
+
+interface ActiveRealtimeSession {
+  threadId: string;
+}
+
+const realtimeSessions = new Map<string, ActiveRealtimeSession>();
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const data = JSON.stringify(body);
@@ -33,6 +44,90 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     return {};
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function sendRealtime(deviceId: string, message: RealtimeOutboundMessage): void {
+  try {
+    hub.sendRealtime(deviceId, message);
+  } catch (error) {
+    console.warn(`[realtime] ${deviceId}: failed to send ${message.type}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function sendRealtimeError(deviceId: string, message: string): void {
+  sendRealtime(deviceId, {
+    type: "realtime.error",
+    deviceId,
+    message
+  });
+}
+
+function buildRealtimeSink(deviceId: string): RealtimeEventSink {
+  return {
+    sdp: (sdp) => sendRealtime(deviceId, { type: "realtime.sdp", deviceId, sdp }),
+    transcriptDelta: (delta) => sendRealtime(deviceId, {
+      type: "realtime.transcript_delta",
+      deviceId,
+      ...delta
+    }),
+    itemAdded: (item) => sendRealtime(deviceId, { type: "realtime.item_added", deviceId, item }),
+    speechStarted: (event) => sendRealtime(deviceId, {
+      type: "realtime.speech_started",
+      deviceId,
+      ...event
+    }),
+    error: (message) => {
+      realtimeSessions.delete(deviceId);
+      sendRealtimeError(deviceId, message);
+    },
+    closed: (reason) => {
+      realtimeSessions.delete(deviceId);
+      sendRealtime(deviceId, { type: "realtime.closed", deviceId, reason });
+    }
+  };
+}
+
+async function startRealtimeSession(message: RealtimeStartMessage, registeredDeviceId: string): Promise<void> {
+  if (message.deviceId !== registeredDeviceId) {
+    sendRealtimeError(registeredDeviceId, `realtime.start deviceId ${message.deviceId} does not match registered device ${registeredDeviceId}`);
+    return;
+  }
+
+  const existing = realtimeSessions.get(message.deviceId);
+  if (existing) {
+    await stopRealtimeSession(message.deviceId, "Replaced by newer realtime.start");
+  }
+
+  try {
+    const session = await realtimeClient.startRealtime({
+      deviceId: message.deviceId,
+      sdp: message.sdp,
+      systemPrompt: message.systemPrompt,
+      model: message.model,
+      reasoningEffort: message.reasoningEffort
+    }, buildRealtimeSink(message.deviceId));
+    realtimeSessions.set(message.deviceId, { threadId: session.threadId });
+  } catch (error) {
+    realtimeSessions.delete(message.deviceId);
+    sendRealtimeError(message.deviceId, error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function stopRealtimeSession(deviceId: string, reason = "Stopped by user"): Promise<void> {
+  const session = realtimeSessions.get(deviceId);
+  if (!session) {
+    sendRealtime(deviceId, { type: "realtime.closed", deviceId, reason });
+    return;
+  }
+  await realtimeClient.stopRealtime(session.threadId, reason);
+}
+
+async function handleRealtimeStop(message: RealtimeStopMessage, registeredDeviceId: string): Promise<void> {
+  if (message.deviceId !== registeredDeviceId) {
+    sendRealtimeError(registeredDeviceId, `realtime.stop deviceId ${message.deviceId} does not match registered device ${registeredDeviceId}`);
+    return;
+  }
+  await stopRealtimeSession(message.deviceId, message.reason ?? "Stopped by Android");
 }
 
 async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -126,8 +221,10 @@ wss.on("connection", (socket) => {
   let deviceId: string | undefined;
 
   socket.on("message", (data) => {
+    let rawMessage: unknown;
     try {
-      const message = inboundPhoneMessageSchema.parse(JSON.parse(data.toString()));
+      rawMessage = JSON.parse(data.toString());
+      const message = inboundPhoneMessageSchema.parse(rawMessage);
       if (message.type === "register") {
         if (message.token !== config.token) {
           socket.close(4001, "invalid token");
@@ -174,8 +271,32 @@ wss.on("connection", (socket) => {
             });
           });
         }
+        return;
+      }
+
+      if (message.type === "realtime.start") {
+        startRealtimeSession(message, deviceId).catch((error) => {
+          sendRealtimeError(message.deviceId, error instanceof Error ? error.message : String(error));
+        });
+        return;
+      }
+
+      if (message.type === "realtime.stop") {
+        handleRealtimeStop(message, deviceId).catch((error) => {
+          sendRealtimeError(message.deviceId, error instanceof Error ? error.message : String(error));
+        });
       }
     } catch (error) {
+      const parsedDeviceId = rawMessage && typeof rawMessage === "object" && typeof (rawMessage as { deviceId?: unknown }).deviceId === "string"
+        ? (rawMessage as { deviceId: string }).deviceId
+        : deviceId;
+      const parsedType = rawMessage && typeof rawMessage === "object" && typeof (rawMessage as { type?: unknown }).type === "string"
+        ? (rawMessage as { type: string }).type
+        : undefined;
+      if (parsedDeviceId && parsedType?.startsWith("realtime.")) {
+        sendRealtimeError(parsedDeviceId, error instanceof Error ? error.message : String(error));
+        return;
+      }
       socket.send(JSON.stringify({
         type: "agent_status",
         status: "error",
@@ -184,7 +305,19 @@ wss.on("connection", (socket) => {
     }
   });
 
-  socket.on("close", () => hub.unregister(socket));
+  socket.on("close", () => {
+    const disconnectedDeviceId = deviceId;
+    hub.unregister(socket);
+    if (disconnectedDeviceId) {
+      const session = realtimeSessions.get(disconnectedDeviceId);
+      if (session) {
+        realtimeSessions.delete(disconnectedDeviceId);
+        realtimeClient.stopRealtime(session.threadId, "Phone disconnected").catch((error) => {
+          console.warn(`[realtime] ${disconnectedDeviceId}: failed to stop after disconnect: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+    }
+  });
 });
 
 server.listen(config.port, config.host, () => {

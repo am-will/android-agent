@@ -53,6 +53,21 @@ export const userRequestMessageSchema = z.object({
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
 });
 
+export const realtimeStartMessageSchema = z.object({
+  type: z.literal("realtime.start"),
+  deviceId: z.string().min(1),
+  sdp: z.string().min(1),
+  systemPrompt: z.string().optional(),
+  model: z.enum(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]).optional(),
+  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
+});
+
+export const realtimeStopMessageSchema = z.object({
+  type: z.literal("realtime.stop"),
+  deviceId: z.string().min(1),
+  reason: z.string().optional()
+});
+
 export const agentStatusMessageSchema = z.object({
   type: z.literal("agent_status"),
   deviceId: z.string().optional(),
@@ -71,15 +86,70 @@ export const inboundPhoneMessageSchema = z.discriminatedUnion("type", [
   registerMessageSchema,
   resultMessageSchema,
   userRequestMessageSchema,
-  agentControlMessageSchema
+  agentControlMessageSchema,
+  realtimeStartMessageSchema,
+  realtimeStopMessageSchema
 ]);
 
 export type RegisterMessage = z.infer<typeof registerMessageSchema>;
 export type CommandMessage = z.infer<typeof commandMessageSchema>;
 export type ResultMessage = z.infer<typeof resultMessageSchema>;
 export type UserRequestMessage = z.infer<typeof userRequestMessageSchema>;
+export type RealtimeStartMessage = z.infer<typeof realtimeStartMessageSchema>;
+export type RealtimeStopMessage = z.infer<typeof realtimeStopMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof agentStatusMessageSchema>;
 export type AgentControlMessage = z.infer<typeof agentControlMessageSchema>;
+
+export interface RealtimeSdpMessage {
+  type: "realtime.sdp";
+  deviceId: string;
+  sdp: string;
+}
+
+export interface RealtimeTranscriptDeltaMessage {
+  type: "realtime.transcript_delta";
+  deviceId: string;
+  role: string;
+  delta: string;
+  text?: string;
+  isFinal: boolean;
+  itemId?: string | null;
+}
+
+export interface RealtimeItemAddedMessage {
+  type: "realtime.item_added";
+  deviceId: string;
+  item: unknown;
+}
+
+export interface RealtimeSpeechStartedMessage {
+  type: "realtime.speech_started";
+  deviceId: string;
+  role?: string;
+  itemId?: string | null;
+}
+
+export interface RealtimeErrorMessage {
+  type: "realtime.error";
+  deviceId: string;
+  message: string;
+}
+
+export interface RealtimeClosedMessage {
+  type: "realtime.closed";
+  deviceId: string;
+  reason: string | null;
+}
+
+export type RealtimeOutboundMessage =
+  | RealtimeSdpMessage
+  | RealtimeTranscriptDeltaMessage
+  | RealtimeItemAddedMessage
+  | RealtimeSpeechStartedMessage
+  | RealtimeErrorMessage
+  | RealtimeClosedMessage;
+
+export type PhoneOutboundMessage = CommandMessage | AgentStatusMessage | RealtimeOutboundMessage;
 
 export interface PhoneCommandRequest {
   deviceId?: string;

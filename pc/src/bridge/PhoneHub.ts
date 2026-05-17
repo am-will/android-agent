@@ -3,9 +3,11 @@ import {
   DEFAULT_TIMEOUT_MS,
   type AgentStatusMessage,
   type CommandMessage,
+  type PhoneOutboundMessage,
   type PhoneCommandRequest,
   type PhoneCommandResult,
   type RegisterMessage,
+  type RealtimeOutboundMessage,
   type ResultMessage,
   newCommandId
 } from "../protocol/messages.js";
@@ -69,6 +71,14 @@ export class PhoneHub {
     return deviceId ?? this.defaultDeviceId;
   }
 
+  sendMessage(deviceId: string, message: PhoneOutboundMessage): void {
+    const phone = this.phones.get(deviceId);
+    if (!phone || phone.socket.readyState !== WebSocket.OPEN) {
+      throw new Error(`Phone ${deviceId} is not connected`);
+    }
+    phone.socket.send(JSON.stringify(message));
+  }
+
   async sendCommand(request: PhoneCommandRequest): Promise<PhoneCommandResult> {
     const deviceId = this.getDefaultDeviceId(request.deviceId);
     const phone = this.phones.get(deviceId);
@@ -107,6 +117,10 @@ export class PhoneHub {
         }
       });
     });
+  }
+
+  sendRealtime(deviceId: string, message: RealtimeOutboundMessage): void {
+    this.sendMessage(deviceId, message);
   }
 
   handleResult(deviceId: string, result: ResultMessage): void {

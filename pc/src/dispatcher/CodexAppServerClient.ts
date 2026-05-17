@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import type { AuditLog } from "../bridge/AuditLog.js";
 import type { AgentClient, AgentRunResult, AgentStatusSink } from "./AgentClient.js";
-import { buildPhoneAgentPrompt } from "./safetyPrompt.js";
+import { PHONE_AGENT_SYSTEM_PROMPT, buildPhoneAgentPrompt } from "./safetyPrompt.js";
 
 interface JsonRpcRequest {
   id?: number;
@@ -26,6 +26,48 @@ interface PendingTurn {
   timer: NodeJS.Timeout;
 }
 
+export interface RealtimeTranscriptDelta {
+  role: string;
+  delta: string;
+  text?: string;
+  isFinal: boolean;
+  itemId?: string | null;
+}
+
+export interface RealtimeSpeechStarted {
+  role?: string;
+  itemId?: string | null;
+}
+
+export interface RealtimeEventSink {
+  sdp(sdp: string): void;
+  transcriptDelta(delta: RealtimeTranscriptDelta): void;
+  itemAdded(item: unknown): void;
+  speechStarted(event: RealtimeSpeechStarted): void;
+  error(message: string): void;
+  closed(reason: string | null): void;
+}
+
+export interface RealtimeStartOptions {
+  deviceId: string;
+  sdp: string;
+  systemPrompt?: string;
+  model?: string;
+  reasoningEffort?: string;
+}
+
+export interface RealtimeSession {
+  deviceId: string;
+  threadId: string;
+  realtimeSessionId?: string | null;
+}
+
+interface ActiveRealtimeSession {
+  deviceId: string;
+  threadId: string;
+  sink: RealtimeEventSink;
+}
+
 function commandParts(command: string): string[] {
   return command.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, "")) ?? [];
 }
@@ -40,6 +82,33 @@ function isCompleteFinalMessage(message: string): boolean {
   return normalized.startsWith("task_complete:");
 }
 
+function buildRealtimeBaseInstructions(systemPrompt?: string): string {
+  const prompt = systemPrompt?.trim() || PHONE_AGENT_SYSTEM_PROMPT;
+  return `${prompt}
+
+Realtime voice mode:
+- The user is speaking through the Android voice interface, so keep spoken responses concise.
+- Use the android-phone MCP tools when phone observation or action is needed.
+- Preserve the same safety rules as text mode; sensitive OS prompts remain manual.`.trim();
+}
+
+function isSpeechStartedItem(item: unknown): boolean {
+  if (!item || typeof item !== "object") {
+    return false;
+  }
+  const type = (item as { type?: unknown; event?: { type?: unknown } }).type
+    ?? (item as { event?: { type?: unknown } }).event?.type;
+  return typeof type === "string" && type.toLowerCase().includes("speech_started");
+}
+
+function itemStringField(item: unknown, key: string): string | undefined {
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+  const value = (item as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 export class CodexAppServerClient implements AgentClient {
   private child?: ChildProcessWithoutNullStreams;
   private lines?: Interface;
@@ -48,6 +117,7 @@ export class CodexAppServerClient implements AgentClient {
   private readonly pending = new Map<number, PendingRpc>();
   private pendingTurn?: PendingTurn;
   private activeSink?: AgentStatusSink;
+  private readonly realtimeSessions = new Map<string, ActiveRealtimeSession>();
 
   constructor(
     private readonly audit?: AuditLog,
@@ -62,7 +132,7 @@ export class CodexAppServerClient implements AgentClient {
   ): Promise<AgentRunResult> {
     this.activeSink = sink;
     await this.ensureStarted();
-    const threadId = await this.startThread(options.model);
+    const threadId = await this.startThread({ model: options.model });
     this.audit?.record("codex_turn_starting", undefined, { threadId, text, model: options.model, reasoningEffort: options.reasoningEffort });
     sink.working("Sending request to Codex app-server");
     const result = await this.request("turn/start", {
@@ -82,7 +152,62 @@ export class CodexAppServerClient implements AgentClient {
     return await this.waitForTurn(threadId, turnId);
   }
 
+  async startRealtime(options: RealtimeStartOptions, sink: RealtimeEventSink): Promise<RealtimeSession> {
+    await this.ensureStarted();
+    const threadId = await this.startThread({
+      model: options.model,
+      baseInstructions: buildRealtimeBaseInstructions(options.systemPrompt)
+    });
+    this.realtimeSessions.set(threadId, { deviceId: options.deviceId, threadId, sink });
+    this.audit?.record("codex_realtime_starting", options.deviceId, {
+      threadId,
+      model: options.model,
+      reasoningEffort: options.reasoningEffort
+    });
+
+    try {
+      const result = await this.request("thread/realtime/start", {
+        threadId,
+        transport: { type: "webrtc", sdp: options.sdp },
+        outputModalities: ["audio", "text"],
+        reasoningEffort: options.reasoningEffort
+      });
+      const realtimeSessionId = (result as { realtimeSessionId?: string | null; session?: { id?: string | null } })?.realtimeSessionId
+        ?? (result as { session?: { id?: string | null } })?.session?.id
+        ?? null;
+      this.audit?.record("codex_realtime_started", options.deviceId, { threadId, realtimeSessionId });
+      return { deviceId: options.deviceId, threadId, realtimeSessionId };
+    } catch (error) {
+      this.realtimeSessions.delete(threadId);
+      throw new Error(`Codex app-server rejected experimental thread/realtime/start: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async stopRealtime(threadId: string, reason = "Stopped by user"): Promise<void> {
+    const session = this.realtimeSessions.get(threadId);
+    if (!session) {
+      return;
+    }
+
+    try {
+      await this.request("thread/realtime/stop", { threadId, reason });
+      this.audit?.record("codex_realtime_stop_requested", session.deviceId, { threadId, reason });
+    } catch (error) {
+      const message = `Codex app-server rejected experimental thread/realtime/stop: ${error instanceof Error ? error.message : String(error)}`;
+      session.sink.error(message);
+      this.audit?.record("codex_realtime_stop_error", session.deviceId, { threadId, error: message });
+    } finally {
+      if (this.realtimeSessions.delete(threadId)) {
+        session.sink.closed(reason);
+      }
+    }
+  }
+
   async close(): Promise<void> {
+    for (const session of this.realtimeSessions.values()) {
+      session.sink.closed("Codex client closed");
+    }
+    this.realtimeSessions.clear();
     this.lines?.close();
     this.child?.kill();
   }
@@ -99,6 +224,10 @@ export class CodexAppServerClient implements AgentClient {
         error: reason
       });
     }
+    for (const session of this.realtimeSessions.values()) {
+      session.sink.closed(reason);
+    }
+    this.realtimeSessions.clear();
     for (const pending of this.pending.values()) {
       pending.reject(new Error(reason));
     }
@@ -137,6 +266,11 @@ export class CodexAppServerClient implements AgentClient {
       this.initialized = false;
       this.pendingTurn?.reject(error);
       this.pendingTurn = undefined;
+      for (const session of this.realtimeSessions.values()) {
+        session.sink.error(error.message);
+        session.sink.closed(error.message);
+      }
+      this.realtimeSessions.clear();
       this.activeSink?.error(error.message);
     });
 
@@ -155,14 +289,15 @@ export class CodexAppServerClient implements AgentClient {
     this.initialized = true;
   }
 
-  private async startThread(model?: string): Promise<string> {
+  private async startThread(options: { model?: string; baseInstructions?: string } = {}): Promise<string> {
     const result = await this.request("thread/start", {
-      model,
+      model: options.model,
       cwd: this.cwd,
       approvalPolicy: "never",
       sandbox: "workspace-write",
       personality: "pragmatic",
-      serviceName: "android_phone_agent"
+      serviceName: "android_phone_agent",
+      baseInstructions: options.baseInstructions
     });
     const thread = (result as { thread?: { id?: string } }).thread;
     if (!thread?.id) {
@@ -270,7 +405,108 @@ export class CodexAppServerClient implements AgentClient {
     });
   }
 
+  private findRealtimeSession(params?: any): ActiveRealtimeSession | undefined {
+    const threadId = params?.threadId;
+    if (typeof threadId === "string") {
+      return this.realtimeSessions.get(threadId);
+    }
+    if (this.realtimeSessions.size === 1) {
+      return this.realtimeSessions.values().next().value;
+    }
+    return undefined;
+  }
+
+  private handleRealtimeNotification(message: { method?: string; params?: any }): boolean {
+    const method = message.method;
+    if (!method?.startsWith("thread/realtime/")) {
+      return false;
+    }
+
+    const session = this.findRealtimeSession(message.params);
+    if (!session) {
+      this.audit?.record("codex_realtime_unmatched_notification", undefined, message);
+      return true;
+    }
+
+    const params = message.params ?? {};
+    this.audit?.record("codex_realtime_notification", session.deviceId, {
+      method,
+      threadId: session.threadId
+    });
+
+    if (method === "thread/realtime/sdp" && typeof params.sdp === "string") {
+      session.sink.sdp(params.sdp);
+      return true;
+    }
+
+    if (method === "thread/realtime/transcript/delta") {
+      const delta = typeof params.delta === "string" ? params.delta : "";
+      const role = typeof params.role === "string" ? params.role : "assistant";
+      session.sink.transcriptDelta({
+        role,
+        delta,
+        isFinal: false,
+        itemId: typeof params.itemId === "string" ? params.itemId : undefined
+      });
+      return true;
+    }
+
+    if (method === "thread/realtime/transcript/done") {
+      const text = typeof params.text === "string" ? params.text : "";
+      const role = typeof params.role === "string" ? params.role : "assistant";
+      session.sink.transcriptDelta({
+        role,
+        delta: "",
+        text,
+        isFinal: true,
+        itemId: typeof params.itemId === "string" ? params.itemId : undefined
+      });
+      return true;
+    }
+
+    if (method === "thread/realtime/itemAdded") {
+      const item = params.item ?? params;
+      session.sink.itemAdded(item);
+      if (isSpeechStartedItem(item)) {
+        session.sink.speechStarted({
+          role: itemStringField(item, "role"),
+          itemId: itemStringField(item, "itemId") ?? itemStringField(item, "item_id") ?? null
+        });
+      }
+      return true;
+    }
+
+    if (method === "thread/realtime/speechStarted" || method === "thread/realtime/speech_started") {
+      session.sink.speechStarted({
+        role: typeof params.role === "string" ? params.role : undefined,
+        itemId: typeof params.itemId === "string" ? params.itemId : null
+      });
+      return true;
+    }
+
+    if (method === "thread/realtime/error") {
+      const text = typeof params.message === "string" ? params.message : "Codex realtime session failed";
+      this.realtimeSessions.delete(session.threadId);
+      session.sink.error(text);
+      session.sink.closed(text);
+      return true;
+    }
+
+    if (method === "thread/realtime/closed") {
+      const reason = typeof params.reason === "string" ? params.reason : null;
+      this.realtimeSessions.delete(session.threadId);
+      session.sink.closed(reason);
+      return true;
+    }
+
+    return true;
+  }
+
   private handleNotification(message: { method?: string; params?: any }): void {
+    if (this.handleRealtimeNotification(message)) {
+      return;
+    }
+
     const sink = this.activeSink;
     if (!sink || !message.method) {
       return;
