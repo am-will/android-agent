@@ -101,10 +101,10 @@ class OverlayController(
             return
         }
         val bubble = ImageButton(context).apply {
-            setImageResource(R.drawable.codex_bubble_logo)
+            setImageResource(R.drawable.openclaw_bubble_logo)
             scaleType = ImageView.ScaleType.FIT_CENTER
             background = bubbleBackgroundForVoiceState(lastVoiceState)
-            contentDescription = "Android Agent"
+            contentDescription = "Open Claw Agent"
             elevation = dp(8).toFloat()
             setPadding(dp(10), dp(10), dp(10), dp(10))
             setOnClickListener { togglePanel() }
@@ -395,14 +395,14 @@ class OverlayController(
                 if (text.isNotEmpty()) {
                     onSubmit(text)
                     input.setText("")
-                    setStatus("Sent to PC bridge")
+                    setStatus("Sent to Open Claw bridge")
                     dismissPanel()
                 }
             }
         }, LinearLayout.LayoutParams(0, dp(44), 1f))
 
         val title = TextView(context).apply {
-            text = "Android Agent"
+            text = "Open Claw Agent"
             textSize = 17f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(palette.primaryText)
@@ -412,7 +412,7 @@ class OverlayController(
             setImageResource(R.drawable.ic_settings_gear)
             background = controlDrawable(palette, dp(14))
             backgroundTintList = null
-            contentDescription = "Open Android Agent settings"
+            contentDescription = "Open Claw Agent settings"
             setColorFilter(palette.primaryText)
             setPadding(dp(8), dp(8), dp(8), dp(8))
             setOnClickListener {
@@ -736,7 +736,7 @@ class OverlayController(
             setImageResource(android.R.drawable.ic_menu_delete)
             setColorFilter(Color.WHITE)
             background = trashTargetBackground(isActive = false)
-            contentDescription = "Close Android Agent bubble"
+            contentDescription = "Close Open Claw Agent bubble"
             elevation = dp(12).toFloat()
             setPadding(dp(16), dp(16), dp(16), dp(16))
             alpha = 0f

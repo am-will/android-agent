@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project Shape
-- This repo is **Open Claw Agent**: an Android phone-control agent that keeps the existing realtime voice flow and is being migrated so non-voice task delegation talks to an installed Open Claw session on the user's remote PC.
+- This repo is **Open Claw Agent**: an Android bubble endpoint for delegating chat and voice tasks directly to an installed Open Claw session on the user's remote PC. Phone control is a secondary tool capability, not the default purpose of the product.
 - `pc/` is the TypeScript PC bridge, HTTP API, dispatcher layer, and `android-phone` MCP server. It uses Node.js 24+, ESM, strict TypeScript, `zod`, `ws`, and the official MCP SDK.
 - `pc/src/bridge/` owns phone registration, command dispatch, audit/status APIs, Realtime session creation, Realtime task queueing, and OpenAI web search for voice-mode lookups.
 - `pc/src/dispatcher/` owns the agent-session adapter boundary. Today it still contains the copied Codex app-server client and isolated fallback adapter; the target adapter is Open Claw on the remote PC. `PHONE_AGENT_USE_FALLBACK=1` deliberately exercises the fallback path.

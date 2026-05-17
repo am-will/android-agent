@@ -5,24 +5,36 @@
 
 ## Overview
 
-Open Claw Agent should keep the Android bridge, Android accessibility executor, and OpenAI Realtime voice flow. The main migration is the PC dispatcher: replace the copied Codex app-server client with an adapter that can send phone-control tasks to an already installed Open Claw session on the user's remote PC.
+Open Claw Agent should primarily be a phone-native endpoint into the user's installed Open Claw session on a remote PC. The Android bubble is the product surface: instead of opening Telegram, Discord, or another chat client to reach Open Claw, the user can tap the floating bubble, type or speak a request, and delegate work directly to Open Claw.
 
-The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundary and add an `OpenClawSessionClient` behind the existing `AgentClient` interface. Realtime `run_phone_task`, bubble text requests, stop, steer, status updates, and Android confirmation should continue to use the same bridge-facing contracts while the desktop-agent implementation changes underneath.
+Phone control remains valuable, but it is a secondary capability. Most delegated work should happen on the remote PC where Open Claw is installed. The phone should act as an input surface, notification/status surface, and optional tool target only when the task actually requires interacting with the Android device.
+
+The best path is to keep the Android bridge, Android overlay, and OpenAI Realtime voice flow, then replace the copied Codex app-server dispatcher with an `OpenClawSessionClient` that can deliver general Open Claw tasks and expose phone-control tools as optional capabilities.
+
+## Product Principles
+
+- The default destination for a bubble request is Open Claw on the remote PC, not Android automation.
+- Phone-control tools are available to Open Claw, but Open Claw should use them only when the user asks for phone work or when the task clearly needs phone context.
+- The Android app should feel like a dedicated Open Claw remote: quick chat, voice, status, stop/cancel, and task result review.
+- The bridge should avoid forcing every task into a phone-control prompt shape. General tasks, coding tasks, browser/desktop tasks, and research tasks should pass through naturally to Open Claw.
 
 ## Target Architecture
 
 1. Android keeps connecting to the PC bridge over `/phone`.
-2. Android voice keeps using OpenAI Realtime through the PC bridge.
-3. The PC bridge queues phone tasks per device exactly as it does today.
-4. The dispatcher sends task instructions, safety policy, model options, and device context to Open Claw.
-5. Open Claw uses local phone-control tools exposed by this repo, either through MCP or a direct HTTP/tool bridge.
-6. Tool calls continue to flow through the PC bridge to Android, and observations/results return to Open Claw.
-7. The Codex app-server client remains temporarily as a compatibility adapter until Open Claw parity is verified.
+2. Bubble text requests are routed to Open Claw as general delegated tasks by default.
+3. Android voice keeps using OpenAI Realtime through the PC bridge; completed voice intents route to the same Open Claw task endpoint.
+4. The PC bridge streams Open Claw status, final answers, and errors back to the bubble.
+5. Open Claw performs most work on the remote PC using its normal desktop/session capabilities.
+6. The bridge exposes Android phone-control tools to Open Claw for optional phone interaction.
+7. When Open Claw calls a phone tool, the local tool layer forwards commands through the bridge to Android and returns observations/results.
+8. The Codex app-server client remains temporarily as a compatibility adapter until Open Claw parity is verified.
 
 ## Open Questions
 
 - What stable control surface does the installed Open Claw session expose: MCP client config, local HTTP API, websocket, CLI command, or a session/socket protocol?
-- Can Open Claw accept mid-turn steering and interruption, or do we need to emulate those with cancellation plus a new task?
+- Can Open Claw accept general chat/task delegation separately from phone-control tasks?
+- Can Open Claw stream intermediate status and final results back to the phone bubble?
+- Can Open Claw accept mid-task steering and interruption, or do we need to emulate those with cancellation plus a new task?
 - Does Open Claw already support MCP tools, or should `android-phone` be exposed through a native Open Claw tool registry?
 - How should the bridge select a remote PC/session when multiple Open Claw sessions are available?
 - What auth boundary is required between this bridge and the remote PC session beyond the local prototype token?
@@ -61,13 +73,13 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
   - Unit tests for config parsing.
   - Manual startup with each supported value.
 
-## Sprint 2: Define The Open Claw Session Contract
+## Sprint 2: Define The Open Claw Endpoint Contract
 
-**Goal**: Decide and document exactly how the bridge talks to Open Claw before wiring production behavior.
+**Goal**: Decide and document exactly how the phone bubble delegates general work to Open Claw before wiring production behavior.
 
 **Demo/Validation**:
 
-- A local test script can create an Open Claw task session, send a prompt, receive status, and terminate the task.
+- A local test script can send a general task to the installed Open Claw session, receive status, and terminate the task.
 - A contract document names every required operation and expected error.
 
 ### Task 2.1: Discover Open Claw Control APIs
@@ -76,30 +88,44 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
 - **Description**: Identify whether Open Claw is best controlled through MCP, HTTP, websocket, CLI subprocess, or an existing app session protocol.
 - **Dependencies**: None
 - **Acceptance Criteria**:
-  - The selected control surface supports task start, tool calls, output streaming, and cancellation, or the plan documents gaps.
+  - The selected control surface supports general task start, status/result streaming, tool calls, and cancellation, or the plan documents gaps.
   - The integration path works with an installed remote-PC session instead of spawning a separate unrelated agent.
 - **Validation**:
   - Manual proof of concept against the installed Open Claw session.
 
-### Task 2.2: Specify Required Adapter Methods
+### Task 2.2: Specify Required Endpoint Methods
 
 - **Location**: `pc/src/dispatcher/AgentClient.ts` or equivalent, `docs/protocol.md`
-- **Description**: Map current behavior to Open Claw operations: start task, stream status, call phone tools, steer task, interrupt task, close session.
+- **Description**: Map bubble behavior to Open Claw operations: start general task, stream status, send final result, steer task, interrupt task, close session, and call optional phone tools.
 - **Dependencies**: Task 2.1
 - **Acceptance Criteria**:
+  - General non-phone tasks do not require Android automation or phone-tool prompts.
   - Every existing bridge feature has an Open Claw equivalent or explicit fallback behavior.
   - Realtime task queueing does not depend on Codex `turn/start` or `turn/steer` terms.
 - **Validation**:
   - Contract tests with a fake Open Claw client.
 
-## Sprint 3: Implement The Open Claw Adapter
+### Task 2.3: Define Task Routing Semantics
 
-**Goal**: Add `OpenClawSessionClient` while leaving Android and realtime protocol contracts unchanged.
+- **Location**: `pc/src/bridge/`, `pc/src/dispatcher/`, `docs/protocol.md`
+- **Description**: Separate general Open Claw tasks from phone-control tasks in bridge vocabulary and status reporting.
+- **Dependencies**: Task 2.2
+- **Acceptance Criteria**:
+  - Bubble text submissions default to general Open Claw delegation.
+  - Realtime voice intents can route to either general Open Claw tasks or phone-control tasks.
+  - Phone-control queueing remains per device; general Open Claw tasks can follow Open Claw's own concurrency model.
+- **Validation**:
+  - Fake-client tests for general task, phone task, steer, stop, and result status.
+
+## Sprint 3: Implement The Open Claw Endpoint Adapter
+
+**Goal**: Add `OpenClawSessionClient` so the Android bubble can delegate ordinary Open Claw work, while keeping phone-control tools available as optional tools.
 
 **Demo/Validation**:
 
-- Bubble text request opens Settings through Open Claw.
-- Realtime voice can say “Open Settings,” receive spoken acknowledgement, and report completion.
+- Bubble text request such as “Summarize my current project status” runs on the remote PC through Open Claw and returns status/final text to Android.
+- Bubble text request such as “Open Settings on my phone” uses the exposed phone tools.
+- Realtime voice can delegate a general Open Claw task without requiring Android automation.
 - Stop and interrupt behave correctly from the Android bubble, notification, and realtime voice.
 
 ### Task 3.1: Build `OpenClawSessionClient`
@@ -108,12 +134,13 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
 - **Description**: Implement the selected Open Claw control protocol behind the existing `AgentClient` shape.
 - **Dependencies**: Sprint 2
 - **Acceptance Criteria**:
-  - Sends safety prompt plus user task to Open Claw.
+  - Sends general user tasks to Open Claw without wrapping them as phone-control instructions.
+  - Includes phone-tool availability as optional context/tooling.
   - Streams meaningful working/done/error status to Android.
   - Surfaces Open Claw startup/session errors without silently falling through.
 - **Validation**:
   - Unit tests with mocked Open Claw responses.
-  - Manual task execution against the installed session.
+  - Manual general task execution against the installed session.
 
 ### Task 3.2: Expose Phone Tools To Open Claw
 
@@ -122,23 +149,25 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
 - **Dependencies**: Task 3.1
 - **Acceptance Criteria**:
   - Tool names and arguments stay aligned with Android command validation.
+  - Open Claw can choose not to use phone tools for remote-PC tasks.
   - Screenshot width/height metadata remains available for normalized tapping.
   - `phone_ask_user_confirmation` remains mandatory for high-risk actions.
 - **Validation**:
   - Tool-level tests.
   - Manual observe/open/tap/type/screenshot confirmation flow.
 
-### Task 3.3: Preserve Steering, Interrupts, And Queueing
+### Task 3.3: Preserve Steering, Interrupts, And Task Status
 
 - **Location**: `pc/src/bridge/RealtimeTaskManager.ts`, `pc/src/dispatcher/`
-- **Description**: Keep the bridge-owned FIFO queue and map realtime `steer_phone_task` and `stop_phone_task` onto Open Claw session capabilities.
+- **Description**: Map bubble stop/steer and realtime stop/steer onto Open Claw session capabilities without assuming every active task is a phone-control task.
 - **Dependencies**: Task 3.1
 - **Acceptance Criteria**:
-  - Normal tasks queue while a device task is running.
-  - Interrupt urgency cancels or supersedes the active Open Claw task.
+  - General Open Claw task status is visible in the Android bubble.
+  - Phone-control tasks still queue per device while a device task is running.
+  - Interrupt urgency cancels or supersedes the relevant active Open Claw task.
   - Steering reaches the active task or returns a clear unsupported error.
 - **Validation**:
-  - Focused tests for queueing, interrupt, steer, and cancellation.
+  - Focused tests for general task status, phone queueing, interrupt, steer, and cancellation.
 
 ## Sprint 4: Flip Defaults And Retire Codex Language
 
@@ -147,6 +176,7 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
 **Demo/Validation**:
 
 - Fresh setup docs lead to an Open Claw-powered phone-control demo without mentioning Codex as a required dependency.
+- Fresh setup docs lead with the phone bubble as an Open Claw endpoint, with phone control documented as an optional tool capability.
 - Legacy Codex tests either remain explicitly labeled or are deleted with the old adapter.
 
 ### Task 4.1: Update Defaults
@@ -155,7 +185,8 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
 - **Description**: Default to `PHONE_AGENT_DISPATCHER=openclaw` once parity is proven.
 - **Dependencies**: Sprint 3
 - **Acceptance Criteria**:
-  - Quick Start works with Open Claw.
+  - Quick Start works with Open Claw for a general remote-PC task.
+  - Phone-control demos still work as secondary examples.
   - Codex-specific setup is no longer in the primary path.
 - **Validation**:
   - End-to-end Android demo from a clean checkout.
@@ -175,13 +206,15 @@ The best path is to keep `pc/src/dispatcher/dispatcher.ts` as the stable boundar
 
 - Run PC static checks and tests after each dispatcher change: `cd pc && npm run check && npm test`.
 - Add fake-client unit tests for Open Claw start, status streaming, tool call routing, cancellation, and errors.
-- Add realtime tests for `run_phone_task`, `steer_phone_task`, `stop_phone_task`, FIFO queueing, interrupt urgency, and tool result delivery.
+- Add tests for general bubble delegation, status streaming, final result delivery, and cancellation.
+- Add realtime tests for general task delegation plus `run_phone_task`, `steer_phone_task`, `stop_phone_task`, FIFO queueing, interrupt urgency, and tool result delivery.
 - Manually test Android pairing, overlay permission, accessibility execution, screenshot coordinate metadata, and confirmation overlays.
 - Run a full voice demo after adapter parity: start realtime, request a phone action, interrupt it, steer it, and complete a risky-action confirmation test.
 
 ## Risks And Mitigations
 
 - **Open Claw may not expose a steerable session API**: keep queueing in the bridge and model steering as cancellation plus a new task if needed.
+- **The product could drift back into phone-only automation**: keep docs, prompts, and UI copy explicit that Android is the endpoint and phone control is optional tooling.
 - **Tool schemas may not map cleanly from MCP**: keep `pc/src/mcp/tools.ts` as the canonical command list and generate or adapt schemas from that source.
 - **Remote PC auth may be underspecified**: keep local prototype token support, then add per-session credentials before exposing beyond a trusted LAN.
 - **Status text may leak legacy naming**: audit Android UI strings, dispatcher logs, and docs during the default flip.

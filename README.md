@@ -1,14 +1,14 @@
 # Open Claw Agent
 
-Open Claw Agent is an Android phone-control prototype with a PC bridge. The Android app keeps the realtime voice experience over OpenAI Realtime/WebRTC, while non-voice phone tasks are being migrated from the copied Codex app-server dispatcher to an installed Open Claw session on the user's remote PC.
+Open Claw Agent is an Android bubble endpoint for delegating work to an installed Open Claw session on the user's remote PC. The phone app is the always-available chat and voice surface; Open Claw does most work on the remote PC, and Android phone control is exposed as an optional tool capability when a task actually needs the phone.
 
 Target control loop:
 
 1. Android overlay bubble sends a text request to the PC bridge over WebSocket.
-2. The bridge sends the request to the Open Claw session adapter.
-3. Open Claw uses the local phone-control tools exposed by the PC bridge.
-4. The local phone-tool layer forwards commands through the bridge to Android.
-5. Android executes commands with `AccessibilityService` and returns observations.
+2. The bridge sends the request to the Open Claw session adapter as a general delegated task.
+3. Open Claw handles the work on the remote PC and streams status/results back to the bubble.
+4. If the task needs Android interaction, Open Claw can call the phone-control tools exposed by the bridge.
+5. Android executes those optional phone commands with `AccessibilityService` and returns observations.
 
 Current prototype note: the copied PC dispatcher still contains a Codex app-server compatibility path. Treat it as legacy scaffolding for the Open Claw migration, not the product direction.
 

@@ -26,7 +26,7 @@ The bridge exposes:
 - `http://127.0.0.1:8787/health` for local status
 - `POST http://127.0.0.1:8787/api/phone/default/command` for local phone-tool adapters
 
-The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime tool calls are queued as phone tasks. The current queue still targets the legacy Codex dispatcher until the Open Claw adapter replaces it.
+The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime intents should route to Open Claw. Phone-control tool calls are only one possible capability of that Open Claw session. The current queue still targets the legacy Codex dispatcher until the Open Claw adapter replaces it.
 
 ## Android
 
@@ -34,12 +34,12 @@ Open `android/` in Android Studio or run Gradle from that directory. Install the
 
 1. Save the WebSocket URL, device ID, token, and OpenAI API key if you want realtime voice or composer transcription.
 2. Grant overlay permission.
-3. If Android shows **Restricted setting**, open **Settings > Apps > Android Agent**, use the three-dot menu, choose **Allow restricted settings**, and authenticate.
-4. Enable **Settings > Accessibility > Installed apps > Android Agent**.
+3. If Android shows **Restricted setting**, open **Settings > Apps > Open Claw Agent**, use the three-dot menu, choose **Allow restricted settings**, and authenticate.
+4. Enable **Settings > Accessibility > Installed apps > Open Claw Agent**.
 5. Confirm the switch still says **On** after leaving and returning to that page.
 6. Start the foreground agent bubble.
 
-While Android Agent is running, the foreground notification includes a **Stop Turn** action. Use it to stop the active phone-control turn from the notification shade, including moments when the floating bubble is temporarily hidden during taps, swipes, or screenshots.
+While Open Claw Agent is running, the foreground notification includes a **Stop Turn** action. Use it to stop the active delegated task from the notification shade, including moments when the floating bubble is temporarily hidden during taps, swipes, or screenshots.
 
 For adb installs, build `android/app/build/outputs/apk/debug/app-debug.apk` and run:
 

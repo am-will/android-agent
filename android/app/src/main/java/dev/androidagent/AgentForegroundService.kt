@@ -240,7 +240,7 @@ class AgentForegroundService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL_ID, "Android Agent", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL_ID, "Open Claw Agent", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
@@ -255,7 +255,7 @@ class AgentForegroundService : Service() {
         val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, flags)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(if (isAgentTurnActive) "Android Agent working" else "Android Agent active")
+            .setContentTitle(if (isAgentTurnActive) "Open Claw Agent working" else "Open Claw Agent active")
             .setContentText(lastNotificationText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(lastNotificationText))
             .setOnlyAlertOnce(true)
@@ -276,7 +276,7 @@ class AgentForegroundService : Service() {
         private const val TAG = "AgentService"
         private const val ACTION_STOP_TURN = "dev.androidagent.action.STOP_TURN"
         private const val NOTIFICATION_ID = 1
-        private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and phone bridge are running"
+        private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and Open Claw bridge are running"
         const val ACTION_STATE_CHANGED = "dev.androidagent.action.AGENT_SERVICE_STATE_CHANGED"
         const val EXTRA_IS_RUNNING = "isRunning"
         const val CHANNEL_ID = "android-agent"

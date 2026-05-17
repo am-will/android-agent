@@ -125,11 +125,11 @@ class MainActivity : ComponentActivity() {
         }
 
         root.addView(card(palette).apply {
-            addView(pill("Private phone bridge", palette))
-            addView(title("Android Agent", palette, 34f).apply {
+            addView(pill("Private Open Claw bridge", palette))
+            addView(title("Open Claw Agent", palette, 34f).apply {
                 setPadding(0, dp(18), 0, 0)
             })
-            addView(body("Control this phone from your paired desktop bridge with explicit permissions and a floating agent bubble.", palette).apply {
+            addView(body("Delegate work to Open Claw on your remote PC from a floating phone bubble. Phone control is available when a task needs it.", palette).apply {
                 setPadding(0, dp(10), 0, 0)
             })
 
@@ -355,7 +355,7 @@ class MainActivity : ComponentActivity() {
         updateChip("service", if (service) "Running" else "Stopped", if (service) palette.success else palette.muted)
 
         statusText.text = if (overlay && microphone && accessibility) {
-            "Ready. Start the bubble when your desktop bridge is listening."
+            "Ready. Start the bubble when your Open Claw bridge is listening."
         } else {
             "Finish the missing permission steps before expecting reliable automation."
         }

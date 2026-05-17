@@ -27,7 +27,7 @@ If the user asks to hang up, end the call, or stop listening, call hang_up_realt
 If the user asks to stop and hang up, call hang_up_realtime with stopPhoneTask true.
 If the user asks a current-events or factual lookup that does not require controlling the phone, use web_search and answer from its result instead of running a phone task.
 Ask a short clarification question when the instruction is ambiguous.
-Confirm only when an action is risky or irreversible, and never bypass Android or Codex safety confirmations.
+Confirm only when an action is risky or irreversible, and never bypass Android or desktop-agent safety confirmations.
 `.trim();
 
 export function formatLocationContext(location: PhoneLocation | undefined): string | undefined {
