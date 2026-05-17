@@ -49,7 +49,10 @@ class AgentForegroundService : Service() {
                 voiceRuntimeController?.start()
             },
             onToggleVoiceMute = { voiceRuntimeController?.toggleMute() },
-            onStopVoice = { voiceRuntimeController?.stopFromUi() }
+            onStopVoice = { voiceRuntimeController?.stopFromUi() },
+            onStartTranscription = { startComposerTranscription() },
+            onStopTranscription = { stopComposerTranscription() },
+            onCancelTranscription = { cancelComposerTranscription() }
         ).also { it.show() }
         voiceRuntimeController = VoiceRuntimeController(
             context = this,
@@ -117,7 +120,7 @@ class AgentForegroundService : Service() {
         }
     }
 
-    private fun stopComposerTranscription(onTranscript: (String) -> Unit = {}) {
+    private fun stopComposerTranscription() {
         val manager = voiceTranscriptionManager ?: return
         val state = manager.currentState()
         if (!state.isRecording || state.isTranscribing) {
@@ -128,7 +131,7 @@ class AgentForegroundService : Service() {
             val transcript = manager.stopAndTranscribe(AgentConfigStore.load(this@AgentForegroundService).openAiApiKey)
             restoreBaseForeground()
             if (transcript != null) {
-                onTranscript(transcript)
+                overlayController?.insertComposerTranscript(transcript)
             }
         }
     }
@@ -140,13 +143,7 @@ class AgentForegroundService : Service() {
     }
 
     private fun handleTranscriptionState(state: VoiceTranscriptionState) {
-        val status = when {
-            state.error != null -> "Transcription error: ${state.error}"
-            state.isTranscribing -> "Transcribing audio..."
-            state.isRecording -> "Recording for transcription..."
-            else -> null
-        }
-        status?.let { overlayController?.setStatus(it) }
+        overlayController?.setTranscriptionState(state)
     }
 
     private fun foregroundServiceType(includeMicrophone: Boolean): Int {

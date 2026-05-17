@@ -31,7 +31,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import dev.androidagent.voice.VoiceRuntimeState
 import dev.androidagent.voice.VoiceRuntimeStatus
+import dev.androidagent.voice.transcription.VoiceTranscriptionState
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.math.roundToInt
 
 class OverlayController(
     private val context: Context,
@@ -40,7 +42,10 @@ class OverlayController(
     private val onDismiss: () -> Unit,
     private val onStartVoice: () -> Unit,
     private val onToggleVoiceMute: () -> Unit,
-    private val onStopVoice: () -> Unit
+    private val onStopVoice: () -> Unit,
+    private val onStartTranscription: () -> Unit,
+    private val onStopTranscription: () -> Unit,
+    private val onCancelTranscription: () -> Unit
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -62,6 +67,10 @@ class OverlayController(
     private var voiceMuteButton: Button? = null
     private var voiceHangupButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
+    private var composerInput: EditText? = null
+    private var transcriptionMicButton: ImageButton? = null
+    private var transcriptionCancelButton: Button? = null
+    private var lastTranscriptionState = VoiceTranscriptionState()
 
     fun show() {
         if (!Settings.canDrawOverlays(context) || bubbleView != null) {
@@ -116,6 +125,36 @@ class OverlayController(
     fun setVoiceState(state: VoiceRuntimeState) {
         lastVoiceState = state
         mainHandler.post { renderVoiceState(state) }
+    }
+
+    fun setTranscriptionState(state: VoiceTranscriptionState) {
+        lastTranscriptionState = state
+        mainHandler.post { renderTranscriptionState(state) }
+    }
+
+    fun insertComposerTranscript(transcript: String) {
+        val normalized = transcript.trim()
+        if (normalized.isBlank()) {
+            setStatus("Transcription result was empty.")
+            return
+        }
+        mainHandler.post {
+            val input = composerInput
+            if (input == null) {
+                setStatus("Transcript ready. Open the bubble to review it.")
+                return@post
+            }
+            val existing = input.text.toString()
+            val separator = when {
+                existing.isBlank() -> ""
+                existing.endsWith("\n") -> ""
+                else -> "\n"
+            }
+            val next = existing + separator + normalized
+            input.setText(next)
+            input.setSelection(next.length)
+            setStatus("Transcript added to composer for review.")
+        }
     }
 
     fun askConfirmation(message: String, preview: String?): CompletableDeferred<Boolean> {
@@ -219,6 +258,40 @@ class OverlayController(
             background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
             setPadding(dp(14), dp(10), dp(14), dp(10))
         }
+        composerInput = input
+        transcriptionMicButton = ImageButton(context).apply {
+            setImageResource(R.drawable.ic_mic)
+            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            contentDescription = "Start voice transcription"
+            setColorFilter(primaryText)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setOnClickListener {
+                if (lastTranscriptionState.isRecording) {
+                    onStopTranscription()
+                } else {
+                    onStartTranscription()
+                }
+            }
+        }
+        transcriptionCancelButton = Button(context).apply {
+            text = "Cancel"
+            textSize = 11f
+            visibility = View.GONE
+            setTextColor(primaryText)
+            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            setOnClickListener { onCancelTranscription() }
+        }
+        val composerRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(input, LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply { rightMargin = dp(8) })
+            addView(transcriptionMicButton, LinearLayout.LayoutParams(dp(44), dp(44)))
+            addView(transcriptionCancelButton, LinearLayout.LayoutParams(dp(72), dp(44)).apply { leftMargin = dp(8) })
+        }
         statusText = TextView(context).apply {
             text = "Connected. Ready for a new request."
             textSize = 12f
@@ -297,7 +370,7 @@ class OverlayController(
             elevation = dp(12).toFloat()
             addView(header)
             addView(voice)
-            addView(input, LinearLayout.LayoutParams(
+            addView(composerRow, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ))
@@ -338,13 +411,20 @@ class OverlayController(
         panel.post { keepInsideScreen(panel, params) }
         panelView = panel
         renderVoiceState(lastVoiceState)
+        renderTranscriptionState(lastTranscriptionState)
     }
 
     private fun dismissPanel() {
+        if (lastTranscriptionState.isRecording) {
+            onCancelTranscription()
+        }
         panelView?.let { windowManager.removeView(it) }
         panelScrimView?.let { windowManager.removeView(it) }
         panelView = null
         panelScrimView = null
+        composerInput = null
+        transcriptionMicButton = null
+        transcriptionCancelButton = null
         voiceSurface = null
         voiceStatusText = null
         voiceTranscriptText = null
@@ -411,6 +491,37 @@ class OverlayController(
         voiceMuteButton?.text = if (state.isMuted) "Unmute" else "Mute"
         voiceMuteButton?.isEnabled = state.isActive
         voiceHangupButton?.isEnabled = state.isActive || state.status == VoiceRuntimeStatus.ERROR
+    }
+
+    private fun renderTranscriptionState(state: VoiceTranscriptionState) {
+        val primaryText = themeColor(android.R.attr.textColorPrimary, 0xFF111111.toInt())
+        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
+        val inactiveBackground = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+
+        transcriptionMicButton?.apply {
+            isEnabled = !state.isTranscribing
+            contentDescription = when {
+                state.isRecording -> "Stop recording and transcribe"
+                state.isTranscribing -> "Transcribing audio"
+                else -> "Start voice transcription"
+            }
+            background = if (state.isRecording) {
+                roundedDrawable(accent, dp(18))
+            } else {
+                inactiveBackground
+            }
+            setColorFilter(if (state.isRecording) Color.WHITE else primaryText)
+        }
+        transcriptionCancelButton?.visibility = if (state.isRecording) View.VISIBLE else View.GONE
+
+        when {
+            state.error != null -> setStatus("Transcription error: ${state.error}")
+            state.isTranscribing -> setStatus("Transcribing audio...")
+            state.isRecording -> {
+                val levelPercent = (state.audioLevel * 100f).roundToInt().coerceIn(0, 100)
+                setStatus("Recording for transcription. Level $levelPercent%. Tap mic to stop, or Cancel to discard.")
+            }
+        }
     }
 
     private fun dismissConfirmation() {
