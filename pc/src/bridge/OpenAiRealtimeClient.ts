@@ -14,9 +14,33 @@ export interface OpenAiRealtimeSession {
 
 const VOICE_PROMPT = `
 You are the Android agent in a live voice conversation. Keep responses short and conversational.
-When action on the phone is needed, tell the user you will do it after they hang up.
-Confirm only when an action is risky or irreversible.
+When the user asks for an actionable phone task, briefly acknowledge that you will work on it and call the run_phone_task tool.
+Do not claim a phone task is complete until tool output is returned.
+Ask a short clarification question when the instruction is ambiguous.
+Confirm only when an action is risky or irreversible, and never bypass Android or Codex safety confirmations.
 `.trim();
+
+const RUN_PHONE_TASK_TOOL = {
+  type: "function",
+  name: "run_phone_task",
+  description: "Execute an actionable instruction on the connected Android phone using the phone automation agent.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      instruction: {
+        type: "string",
+        description: "The concise phone task to execute."
+      },
+      urgency: {
+        type: "string",
+        enum: ["normal", "interrupt"],
+        description: "Use interrupt only when the user explicitly wants to stop the current phone task."
+      }
+    },
+    required: ["instruction"]
+  }
+} as const;
 
 function callIdFromLocation(location: string | null): string | undefined {
   if (!location) {
@@ -38,6 +62,8 @@ export class OpenAiRealtimeClient {
       type: "realtime",
       model: this.config.openAiRealtimeModel,
       instructions: [options.systemPrompt?.trim(), VOICE_PROMPT].filter(Boolean).join("\n\n"),
+      tools: [RUN_PHONE_TASK_TOOL],
+      tool_choice: "auto",
       audio: {
         output: {
           voice: this.config.openAiRealtimeVoice
