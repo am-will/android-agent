@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import type { AuditLog } from "../bridge/AuditLog.js";
-import type { AgentClient, AgentRunResult, AgentStatusSink } from "./AgentClient.js";
+import type { AgentClient, AgentRequestOptions, AgentRunResult, AgentStatusSink } from "./AgentClient.js";
 import { PHONE_AGENT_SYSTEM_PROMPT, buildPhoneAgentPrompt } from "./safetyPrompt.js";
 
 interface JsonRpcRequest {
@@ -128,7 +128,7 @@ export class CodexAppServerClient implements AgentClient {
   async submitUserRequest(
     text: string,
     sink: AgentStatusSink,
-    options: { systemPrompt?: string; model?: string; reasoningEffort?: string } = {}
+    options: AgentRequestOptions = {}
   ): Promise<AgentRunResult> {
     this.activeSink = sink;
     await this.ensureStarted();

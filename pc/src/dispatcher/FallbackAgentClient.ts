@@ -3,8 +3,8 @@ import type { AgentClient, AgentRunResult, AgentStatusSink } from "./AgentClient
 export class FallbackAgentClient implements AgentClient {
   async submitUserRequest(text: string, sink: AgentStatusSink): Promise<AgentRunResult> {
     const error =
-      `Codex app-server is unavailable. Request queued for manual fallback: ${text}. ` +
-      "Start `codex app-server --listen stdio://` support or wire a CLI/custom-agent adapter.";
+      `No desktop agent adapter is available. Request queued for manual fallback: ${text}. ` +
+      "Start the Open Claw adapter, choose the legacy Codex adapter, or wire a custom adapter.";
     sink.error(error);
     return { error };
   }

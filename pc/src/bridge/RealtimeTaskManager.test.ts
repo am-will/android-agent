@@ -18,13 +18,13 @@ class Deferred<T> {
 }
 
 class FakeDispatcher {
-  readonly requests: string[] = [];
+  readonly requests: Array<{ text: string; taskKind?: string }> = [];
   readonly stopReasons: string[] = [];
   readonly steers: string[] = [];
   results: Array<Promise<AgentRunResult>> = [];
 
-  async handleUserRequest(request: { text: string }): Promise<AgentRunResult> {
-    this.requests.push(request.text);
+  async handleUserRequest(request: { text: string }, options?: { taskKind?: string }): Promise<AgentRunResult> {
+    this.requests.push({ text: request.text, taskKind: options?.taskKind });
     return await (this.results.shift() ?? Promise.resolve({ finalMessage: `done ${request.text}` }));
   }
 
@@ -124,7 +124,7 @@ test("queues one active task at a time", async () => {
   await manager.handleToolCall(toolCall("call_1", "Open Messages"));
   await manager.handleToolCall(toolCall("call_2", "Open Alice"));
 
-  assert.deepEqual(dispatcher.requests, ["Open Messages"]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.text), ["Open Messages"]);
   assert.equal(messages.filter((message) => message.type === "realtime.task_status").at(-1)?.queued, 1);
 
   first.resolve({ finalMessage: "Messages opened" });
@@ -132,7 +132,8 @@ test("queues one active task at a time", async () => {
   second.resolve({ finalMessage: "Alice opened" });
   await waitFor(() => results(messages).length === 2);
 
-  assert.deepEqual(dispatcher.requests, ["Open Messages", "Open Alice"]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.text), ["Open Messages", "Open Alice"]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.taskKind), ["phone", "phone"]);
   assert.equal(results(messages)[0]?.status, "completed");
   assert.equal(results(messages)[1]?.status, "completed");
 });
@@ -145,7 +146,7 @@ test("ignores duplicate call IDs while active", async () => {
   await manager.handleToolCall(toolCall("call_1", "Open Settings"));
   await manager.handleToolCall(toolCall("call_1", "Open Settings"));
 
-  assert.deepEqual(dispatcher.requests, ["Open Settings"]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.text), ["Open Settings"]);
   first.resolve({ finalMessage: "Settings opened" });
 });
 
@@ -173,7 +174,7 @@ test("interrupt cancels the active task before starting the next one", async () 
 
   assert.equal(dispatcher.stopReasons.length, 1);
   assert.equal(results(messages).find((message) => message.callId === "call_1")?.status, "cancelled");
-  assert.deepEqual(dispatcher.requests, ["Open Settings", "Open Messages"]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.text), ["Open Settings", "Open Messages"]);
 
   second.resolve({ finalMessage: "Messages opened" });
   first.resolve({ finalMessage: "Settings opened late" });
@@ -218,7 +219,8 @@ test("steer_phone_task becomes a normal phone task when no turn is active", asyn
   await manager.handleToolCall(namedToolCall("call_steer", "steer_phone_task", { guidance: "Open the first video on this screen." }));
   await waitFor(() => results(messages).some((message) => message.callId === "call_steer"));
 
-  assert.deepEqual(dispatcher.requests, ["Open the first video on this screen."]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.text), ["Open the first video on this screen."]);
+  assert.deepEqual(dispatcher.requests.map((request) => request.taskKind), ["phone"]);
   assert.deepEqual(dispatcher.steers, []);
   assert.equal(results(messages).find((message) => message.callId === "call_steer")?.status, "completed");
 });
@@ -232,4 +234,14 @@ test("web_search returns search output without starting a phone task", async () 
   assert.deepEqual(locations, [{ latitude: 31.7619, longitude: -106.485, accuracyMeters: 100 }]);
   assert.deepEqual(dispatcher.requests, []);
   assert.equal(results(messages).find((message) => message.callId === "call_search")?.output, "It is sunny.");
+});
+
+test("delegate_openclaw_task routes general realtime work to dispatcher", async () => {
+  const { dispatcher, manager, messages } = createHarness();
+
+  await manager.handleToolCall(namedToolCall("call_general", "delegate_openclaw_task", { instruction: "Summarize my inbox" }));
+  await waitFor(() => results(messages).some((message) => message.callId === "call_general"));
+
+  assert.deepEqual(dispatcher.requests, [{ text: "Summarize my inbox", taskKind: "general" }]);
+  assert.equal(results(messages).find((message) => message.callId === "call_general")?.output, "done Summarize my inbox");
 });

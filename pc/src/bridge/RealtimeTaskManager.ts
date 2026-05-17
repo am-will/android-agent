@@ -20,6 +20,7 @@ interface QueuedTask {
   callId: string;
   instruction: string;
   urgency: "normal" | "interrupt";
+  kind: "general" | "phone";
 }
 
 interface DeviceTaskState {
@@ -56,12 +57,12 @@ export class RealtimeTaskManager {
       return;
     }
 
-    if (message.name === "stop_phone_task") {
+    if (message.name === "stop_phone_task" || message.name === "stop_openclaw_task") {
       await this.handleStopToolCall(message);
       return;
     }
 
-    if (message.name === "steer_phone_task") {
+    if (message.name === "steer_phone_task" || message.name === "steer_openclaw_task") {
       await this.handleSteerToolCall(message);
       return;
     }
@@ -86,7 +87,8 @@ export class RealtimeTaskManager {
       deviceId: message.deviceId,
       callId: message.callId,
       instruction: validated.instruction,
-      urgency: validated.urgency
+      urgency: validated.urgency,
+      kind: validated.kind
     };
 
     const state = this.stateFor(message.deviceId);
@@ -131,7 +133,9 @@ export class RealtimeTaskManager {
       callId: message.callId,
       ok: true,
       status: "completed",
-      output: "Stopped the active phone task and cleared queued realtime phone tasks.",
+      output: message.name === "stop_openclaw_task"
+        ? "Stopped the active Open Claw task and cleared queued realtime tasks."
+        : "Stopped the active phone task and cleared queued realtime phone tasks.",
       createResponse: false
     });
   }
@@ -145,7 +149,7 @@ export class RealtimeTaskManager {
         callId: message.callId,
         ok: false,
         status: "failed",
-        error: "steer_phone_task requires non-empty guidance."
+        error: `${message.name} requires non-empty guidance.`
       });
       return;
     }
@@ -156,7 +160,8 @@ export class RealtimeTaskManager {
         deviceId: message.deviceId,
         callId: message.callId,
         instruction: guidance,
-        urgency: "normal"
+        urgency: "normal",
+        kind: message.name === "steer_openclaw_task" ? "general" : "phone"
       };
       state.queue.unshift(task);
       this.sendStatus(message.deviceId);
@@ -170,7 +175,7 @@ export class RealtimeTaskManager {
         callId: message.callId,
         ok: true,
         status: "completed",
-        output: "Steered the active phone task.",
+        output: message.name === "steer_openclaw_task" ? "Steered the active Open Claw task." : "Steered the active phone task.",
         createResponse: false
       });
       this.sendStatus(message.deviceId);
@@ -292,12 +297,12 @@ export class RealtimeTaskManager {
       return;
     }
     state.active = undefined;
-    await this.options.dispatcher.stopActiveTurn(nextTask.deviceId, "Interrupted by newer realtime phone task");
+    await this.options.dispatcher.stopActiveTurn(nextTask.deviceId, `Interrupted by newer realtime ${nextTask.kind === "phone" ? "phone" : "Open Claw"} task`);
     this.sendResult(nextTask.deviceId, {
       callId: active.callId,
       ok: false,
       status: "cancelled",
-      error: "Interrupted by newer realtime phone task."
+      error: `Interrupted by newer realtime ${nextTask.kind === "phone" ? "phone" : "Open Claw"} task.`
     });
   }
 
@@ -330,6 +335,8 @@ export class RealtimeTaskManager {
           deviceId: task.deviceId,
           inputType: "text",
           text: task.instruction
+        }, {
+          taskKind: task.kind
         }),
         this.taskTimeoutMs
       );
@@ -338,18 +345,18 @@ export class RealtimeTaskManager {
         callId: task.callId,
         ok: !error,
         status: error ? "failed" : "completed",
-        output: result.finalMessage?.trim() || (error ? undefined : "Phone task completed."),
+        output: result.finalMessage?.trim() || (error ? undefined : task.kind === "phone" ? "Phone task completed." : "Open Claw task completed."),
         error
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message === "realtime task timeout") {
-        await this.options.dispatcher.stopActiveTurn(task.deviceId, `Realtime phone task timed out after ${this.taskTimeoutMs}ms`);
+        await this.options.dispatcher.stopActiveTurn(task.deviceId, `Realtime ${task.kind === "phone" ? "phone" : "Open Claw"} task timed out after ${this.taskTimeoutMs}ms`);
         this.sendResult(task.deviceId, {
           callId: task.callId,
           ok: false,
           status: "timeout",
-          error: `Phone task timed out after ${Math.round(this.taskTimeoutMs / 1000)} seconds.`
+          error: `${task.kind === "phone" ? "Phone" : "Open Claw"} task timed out after ${Math.round(this.taskTimeoutMs / 1000)} seconds.`
         });
       } else {
         this.sendResult(task.deviceId, {
@@ -367,23 +374,26 @@ export class RealtimeTaskManager {
     }
   }
 
-  private validate(message: RealtimeToolCallMessage): { ok: true; instruction: string; urgency: "normal" | "interrupt" } | { ok: false; error: string } {
-    if (message.name !== "run_phone_task") {
+  private validate(message: RealtimeToolCallMessage): { ok: true; instruction: string; urgency: "normal" | "interrupt"; kind: "general" | "phone" } | { ok: false; error: string } {
+    const kind = message.name === "delegate_openclaw_task" ? "general" : message.name === "run_phone_task" ? "phone" : undefined;
+    if (!kind) {
       return { ok: false, error: `Unsupported realtime tool ${message.name}.` };
     }
 
     const instruction = typeof message.arguments.instruction === "string"
       ? message.arguments.instruction.trim()
+      : typeof message.arguments.task === "string"
+      ? message.arguments.task.trim()
       : "";
     if (!instruction) {
-      return { ok: false, error: "run_phone_task requires a non-empty instruction." };
+      return { ok: false, error: `${message.name} requires a non-empty instruction.` };
     }
     if (instruction.length > MAX_INSTRUCTION_LENGTH) {
-      return { ok: false, error: `run_phone_task instruction is too long (${instruction.length}/${MAX_INSTRUCTION_LENGTH}).` };
+      return { ok: false, error: `${message.name} instruction is too long (${instruction.length}/${MAX_INSTRUCTION_LENGTH}).` };
     }
 
     const urgency = message.arguments.urgency === "interrupt" ? "interrupt" : "normal";
-    return { ok: true, instruction, urgency };
+    return { ok: true, instruction, urgency, kind };
   }
 
   private findAcceptedCall(deviceId: string, callId: string): "active" | "queued" | RealtimeToolResultMessage | undefined {

@@ -13,11 +13,21 @@ export interface AgentRunResult {
   error?: string;
 }
 
+export type AgentTaskKind = "general" | "phone";
+
+export interface AgentRequestOptions {
+  deviceId?: string;
+  systemPrompt?: string;
+  model?: string;
+  reasoningEffort?: string;
+  taskKind?: AgentTaskKind;
+}
+
 export interface AgentClient {
   submitUserRequest(
     text: string,
     sink: AgentStatusSink,
-    options?: { systemPrompt?: string; model?: string; reasoningEffort?: string }
+    options?: AgentRequestOptions
   ): Promise<AgentRunResult>;
   steer?(text: string): Promise<void>;
   interrupt?(reason?: string): Promise<void>;
