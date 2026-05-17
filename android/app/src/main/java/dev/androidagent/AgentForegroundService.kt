@@ -31,6 +31,7 @@ class AgentForegroundService : Service() {
             context = this,
             onSubmit = { text -> webSocketClient?.sendUserRequest(text, AgentConfigStore.load(this)) },
             onStop = { webSocketClient?.sendStopRequest("Stopped from Android overlay") },
+            onDismiss = { stopSelf() },
             onStartVoice = {
                 if (hasMicPermission()) {
                     ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = true))

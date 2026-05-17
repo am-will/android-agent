@@ -30,6 +30,7 @@ class OverlayController(
     private val context: Context,
     private val onSubmit: (String) -> Unit,
     private val onStop: () -> Unit,
+    private val onDismiss: () -> Unit,
     private val onStartVoice: () -> Unit,
     private val onToggleVoiceMute: () -> Unit,
     private val onStopVoice: () -> Unit
@@ -39,6 +40,9 @@ class OverlayController(
     private var bubbleView: View? = null
     private var panelView: View? = null
     private var panelScrimView: View? = null
+    private var trashTargetView: ImageView? = null
+    private var trashTargetBounds = Rect()
+    private var isBubbleOverTrashTarget = false
     private var confirmationView: View? = null
     private var confirmationScrimView: View? = null
     private var statusText: TextView? = null
@@ -67,13 +71,27 @@ class OverlayController(
             x = dp(16)
             y = dp(160)
         }
-        attachDrag(bubble, params) { togglePanel() }
+        attachDrag(
+            view = bubble,
+            params = params,
+            onDragStart = { showTrashTarget() },
+            onDrag = { dragParams, dragView -> updateTrashTargetState(dragParams, dragView) },
+            onDragEnd = { dragParams, dragView ->
+                val shouldDismiss = updateTrashTargetState(dragParams, dragView)
+                hideTrashTarget()
+                if (shouldDismiss) {
+                    onDismiss()
+                }
+            },
+            onDragCancel = { hideTrashTarget() }
+        ) { togglePanel() }
         windowManager.addView(bubble, params)
         bubbleView = bubble
     }
 
     fun hide() {
         bubbleView?.let { windowManager.removeView(it) }
+        hideTrashTarget()
         dismissPanel()
         dismissConfirmation()
         bubbleView = null
@@ -390,6 +408,57 @@ class OverlayController(
         confirmationScrimView = null
     }
 
+    private fun showTrashTarget() {
+        if (trashTargetView != null) {
+            return
+        }
+        val size = dp(96)
+        val bottomMargin = dp(32)
+        val display = context.resources.displayMetrics
+        trashTargetBounds = Rect(
+            (display.widthPixels - size) / 2,
+            display.heightPixels - bottomMargin - size,
+            (display.widthPixels + size) / 2,
+            display.heightPixels - bottomMargin
+        )
+        val target = ImageView(context).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            setColorFilter(Color.WHITE)
+            background = roundedDrawable(0xCC333333.toInt(), size / 2)
+            contentDescription = "Close Android Agent bubble"
+            elevation = dp(12).toFloat()
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+        }
+        val params = overlayParams(width = size, height = size, focusable = false).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = bottomMargin
+        }
+        windowManager.addView(target, params)
+        trashTargetView = target
+        isBubbleOverTrashTarget = false
+    }
+
+    private fun hideTrashTarget() {
+        trashTargetView?.let { windowManager.removeView(it) }
+        trashTargetView = null
+        trashTargetBounds = Rect()
+        isBubbleOverTrashTarget = false
+    }
+
+    private fun updateTrashTargetState(params: WindowManager.LayoutParams, view: View): Boolean {
+        val centerX = params.x + view.width / 2
+        val centerY = params.y + view.height / 2
+        val isOverTarget = trashTargetBounds.contains(centerX, centerY)
+        if (isBubbleOverTrashTarget != isOverTarget) {
+            isBubbleOverTrashTarget = isOverTarget
+            trashTargetView?.background = roundedDrawable(
+                if (isOverTarget) 0xFFE53935.toInt() else 0xCC333333.toInt(),
+                dp(48)
+            )
+        }
+        return isOverTarget
+    }
+
     private fun openSettings() {
         context.startActivity(
             Intent(context, MainActivity::class.java)
@@ -420,6 +489,10 @@ class OverlayController(
         params: WindowManager.LayoutParams,
         windowView: View = view,
         keepAboveKeyboard: Boolean = false,
+        onDragStart: () -> Unit = {},
+        onDrag: (WindowManager.LayoutParams, View) -> Unit = { _, _ -> },
+        onDragEnd: (WindowManager.LayoutParams, View) -> Unit = { _, _ -> },
+        onDragCancel: () -> Unit = {},
         onClick: () -> Unit
     ) {
         var startX = 0
@@ -445,6 +518,7 @@ class OverlayController(
                     val dy = event.rawY - touchY
                     if (!moved && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
                         moved = true
+                        onDragStart()
                     }
                     if (moved) {
                         params.x = startX + dx.toInt()
@@ -454,6 +528,7 @@ class OverlayController(
                             keepAboveKeyboard(windowView, params)
                         }
                         windowManager.updateViewLayout(windowView, params)
+                        onDrag(params, windowView)
                     }
                     true
                 }
@@ -461,10 +536,15 @@ class OverlayController(
                     val isClick = !moved && event.eventTime - downTime < 250
                     if (isClick) {
                         onClick()
+                    } else {
+                        onDragEnd(params, windowView)
                     }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    if (moved) {
+                        onDragCancel()
+                    }
                     moved = false
                     true
                 }
