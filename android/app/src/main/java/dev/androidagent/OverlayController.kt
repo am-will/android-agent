@@ -2,6 +2,9 @@ package dev.androidagent
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -49,6 +52,7 @@ class OverlayController(
     private var trashTargetView: ImageView? = null
     private var trashTargetBounds = Rect()
     private var isBubbleOverTrashTarget = false
+    private var isDismissAnimating = false
     private var confirmationView: View? = null
     private var confirmationScrimView: View? = null
     private var statusText: TextView? = null
@@ -85,9 +89,10 @@ class OverlayController(
             onDrag = { dragParams, dragView -> updateTrashTargetState(dragParams, dragView) },
             onDragEnd = { dragParams, dragView ->
                 val shouldDismiss = updateTrashTargetState(dragParams, dragView)
-                hideTrashTarget()
                 if (shouldDismiss) {
-                    onDismiss()
+                    animateBubbleDismiss(dragView)
+                } else {
+                    hideTrashTarget()
                 }
             },
             onDragCancel = { hideTrashTarget() }
@@ -494,6 +499,7 @@ class OverlayController(
         trashTargetView = null
         trashTargetBounds = Rect()
         isBubbleOverTrashTarget = false
+        isDismissAnimating = false
     }
 
     private fun updateTrashTargetState(params: WindowManager.LayoutParams, view: View): Boolean {
@@ -511,6 +517,76 @@ class OverlayController(
             trashTargetView?.background = trashTargetBackground(isActive = isOverTarget)
         }
         return isOverTarget
+    }
+
+    private fun animateBubbleDismiss(bubble: View) {
+        if (isDismissAnimating) {
+            return
+        }
+        val target = trashTargetView
+        isDismissAnimating = true
+        listOfNotNull(bubble, target).forEach { view ->
+            view.animate().cancel()
+            view.animate().setListener(null)
+            view.visibility = View.VISIBLE
+            view.alpha = 1f
+            view.scaleX = 1f
+            view.scaleY = 1f
+        }
+        target?.background = trashTargetBackground(isActive = true)
+
+        val animators = mutableListOf<Animator>()
+        animators.add(dismissAnimatorFor(bubble))
+        target?.let { animators.add(dismissAnimatorFor(it)) }
+
+        AnimatorSet().apply {
+            playTogether(animators)
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    onDismiss()
+                }
+
+                override fun onAnimationCancel(animation: Animator) {
+                    isDismissAnimating = false
+                }
+            })
+            start()
+        }
+    }
+
+    private fun dismissAnimatorFor(view: View): AnimatorSet {
+        return AnimatorSet().apply {
+            playSequentially(
+                scaleAnimator(view, 1.12f, TRASH_TARGET_PULSE_MS),
+                scaleAnimator(view, 0.96f, TRASH_TARGET_PULSE_MS),
+                scaleAnimator(view, 1.12f, TRASH_TARGET_PULSE_MS),
+                scaleAnimator(view, 0.96f, TRASH_TARGET_PULSE_MS),
+                shrinkAnimator(view)
+            )
+        }
+    }
+
+    private fun scaleAnimator(view: View, scale: Float, durationMs: Long): ObjectAnimator {
+        return ObjectAnimator.ofPropertyValuesHolder(
+            view,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, scale),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, scale)
+        ).apply {
+            duration = durationMs
+            interpolator = trashShowInterpolator
+        }
+    }
+
+    private fun shrinkAnimator(view: View): ObjectAnimator {
+        return ObjectAnimator.ofPropertyValuesHolder(
+            view,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 0f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 0f),
+            PropertyValuesHolder.ofFloat(View.ALPHA, 0f)
+        ).apply {
+            duration = TRASH_TARGET_SHRINK_MS
+            interpolator = trashHideInterpolator
+        }
     }
 
     private fun updateTrashTargetBounds() {
@@ -542,6 +618,8 @@ class OverlayController(
     companion object {
         private const val TRASH_TARGET_SHOW_MS = 140L
         private const val TRASH_TARGET_HIDE_MS = 110L
+        private const val TRASH_TARGET_PULSE_MS = 55L
+        private const val TRASH_TARGET_SHRINK_MS = 140L
         private const val TRASH_TARGET_HIDDEN_SCALE = 0.82f
     }
 
