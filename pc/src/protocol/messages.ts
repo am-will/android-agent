@@ -69,6 +69,15 @@ export const realtimeStopMessageSchema = z.object({
   reason: z.string().optional()
 });
 
+export const realtimeToolCallMessageSchema = z.object({
+  type: z.literal("realtime.tool_call"),
+  deviceId: z.string().min(1),
+  callId: z.string().min(1),
+  itemId: z.string().optional().nullable(),
+  name: z.string().min(1),
+  arguments: z.record(z.string(), z.unknown()).default({})
+});
+
 export const agentStatusMessageSchema = z.object({
   type: z.literal("agent_status"),
   deviceId: z.string().optional(),
@@ -89,7 +98,8 @@ export const inboundPhoneMessageSchema = z.discriminatedUnion("type", [
   userRequestMessageSchema,
   agentControlMessageSchema,
   realtimeStartMessageSchema,
-  realtimeStopMessageSchema
+  realtimeStopMessageSchema,
+  realtimeToolCallMessageSchema
 ]);
 
 export type RegisterMessage = z.infer<typeof registerMessageSchema>;
@@ -98,6 +108,7 @@ export type ResultMessage = z.infer<typeof resultMessageSchema>;
 export type UserRequestMessage = z.infer<typeof userRequestMessageSchema>;
 export type RealtimeStartMessage = z.infer<typeof realtimeStartMessageSchema>;
 export type RealtimeStopMessage = z.infer<typeof realtimeStopMessageSchema>;
+export type RealtimeToolCallMessage = z.infer<typeof realtimeToolCallMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof agentStatusMessageSchema>;
 export type AgentControlMessage = z.infer<typeof agentControlMessageSchema>;
 
@@ -142,13 +153,35 @@ export interface RealtimeClosedMessage {
   reason: string | null;
 }
 
+export interface RealtimeToolResultMessage {
+  type: "realtime.tool_result";
+  deviceId: string;
+  callId: string;
+  ok: boolean;
+  output?: string;
+  error?: string;
+  status: "completed" | "failed" | "timeout" | "cancelled";
+}
+
+export interface RealtimeTaskStatusMessage {
+  type: "realtime.task_status";
+  deviceId: string;
+  running: boolean;
+  queued: number;
+  currentTask?: string | null;
+  completed?: number;
+  failed?: number;
+}
+
 export type RealtimeOutboundMessage =
   | RealtimeSdpMessage
   | RealtimeTranscriptDeltaMessage
   | RealtimeItemAddedMessage
   | RealtimeSpeechStartedMessage
   | RealtimeErrorMessage
-  | RealtimeClosedMessage;
+  | RealtimeClosedMessage
+  | RealtimeToolResultMessage
+  | RealtimeTaskStatusMessage;
 
 export type PhoneOutboundMessage = CommandMessage | AgentStatusMessage | RealtimeOutboundMessage;
 

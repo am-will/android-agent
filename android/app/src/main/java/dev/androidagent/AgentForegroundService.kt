@@ -59,6 +59,7 @@ class AgentForegroundService : Service() {
             sendStart = { sdp, config -> webSocketClient?.sendRealtimeStart(sdp, config) },
             sendStop = { reason -> webSocketClient?.sendRealtimeStop(reason) },
             sendUserPrompt = { text, config -> webSocketClient?.sendUserRequest(text, config) },
+            sendToolCall = { call -> webSocketClient?.sendRealtimeToolCall(call, AgentConfigStore.load(this)) },
             onStateChanged = { state -> overlayController?.setVoiceState(state) }
         )
         connectWebSocket()
@@ -98,7 +99,8 @@ class AgentForegroundService : Service() {
             onRealtimeItemAdded = { voiceRuntimeController?.onRealtimeItemAdded(it) },
             onRealtimeSpeechStarted = { voiceRuntimeController?.onRealtimeSpeechStarted(it) },
             onRealtimeError = { voiceRuntimeController?.onRealtimeError(it) },
-            onRealtimeClosed = { voiceRuntimeController?.onRealtimeClosed(it) }
+            onRealtimeClosed = { voiceRuntimeController?.onRealtimeClosed(it) },
+            onRealtimeToolResult = { voiceRuntimeController?.onRealtimeToolResult(it) }
         ).also { it.connect() }
     }
 
