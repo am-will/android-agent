@@ -235,7 +235,7 @@ class VoiceRuntimeController(
             }
             trackResponseState(type, event)
             when {
-                type.contains("error") -> showBackendError(event.optString("message").ifBlank { event.optString("error").ifBlank { "Realtime voice failed." } })
+                type.contains("error") -> handleRealtimeDataChannelError(event)
                 type == "input_audio_buffer.speech_started" -> {
                     cancelActiveResponseForBargeIn()
                     val transcript = transcriptNormalizer.applyEvent(type, event)
@@ -253,6 +253,31 @@ class VoiceRuntimeController(
                 }
             }
         }
+    }
+
+    private fun handleRealtimeDataChannelError(event: JSONObject) {
+        val message = realtimeErrorMessage(event)
+        if (isBenignResponseCancelRace(message)) {
+            activeResponseId = null
+            updateState(state.copy(status = VoiceRuntimeStatus.LISTENING, error = null))
+            return
+        }
+        showBackendError(message)
+    }
+
+    private fun realtimeErrorMessage(event: JSONObject): String {
+        event.optString("message").takeIf { it.isNotBlank() }?.let { return it }
+        val error = event.optJSONObject("error")
+        error?.optString("message")?.takeIf { it.isNotBlank() }?.let { return it }
+        error?.optString("code")?.takeIf { it.isNotBlank() }?.let { return it }
+        event.optString("error").takeIf { it.isNotBlank() }?.let { return it }
+        return "Realtime voice failed."
+    }
+
+    private fun isBenignResponseCancelRace(message: String): Boolean {
+        val normalized = message.lowercase()
+        return ("response.cancel" in normalized || "cancellation failed" in normalized) &&
+            ("no active response" in normalized || "not active" in normalized)
     }
 
     private fun trackResponseState(type: String, event: JSONObject) {
