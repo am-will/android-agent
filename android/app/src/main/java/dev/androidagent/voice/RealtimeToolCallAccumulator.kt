@@ -26,7 +26,10 @@ class RealtimeToolCallAccumulator {
         }
 
         val callId = event.callIdOrNull() ?: return null
-        val itemId = event.optString("item_id").ifBlank { event.optString("itemId").ifBlank { null } }
+        val itemId = event.optString("item_id")
+            .ifBlank { event.optString("itemId") }
+            .ifBlank { item?.optString("id").orEmpty() }
+            .ifBlank { null }
         val key = itemId ?: callId
         if (completedKeys.contains(key)) {
             return null

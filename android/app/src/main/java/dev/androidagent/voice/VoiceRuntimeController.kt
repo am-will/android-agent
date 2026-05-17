@@ -187,25 +187,10 @@ class VoiceRuntimeController(
             if (callId.isBlank() || !toolOutputsSent.add(callId)) {
                 return@launch
             }
-            val output = JSONObject()
-                .put("ok", payload.optBoolean("ok", false))
-                .put("status", payload.optString("status").ifBlank { if (payload.optBoolean("ok", false)) "completed" else "failed" })
-            payload.optString("output").takeIf { it.isNotBlank() }?.let { output.put("output", it) }
-            payload.optString("error").takeIf { it.isNotBlank() }?.let { output.put("error", it) }
-
-            val sentOutput = session?.sendJsonEvent(
-                JSONObject()
-                    .put("type", "conversation.item.create")
-                    .put(
-                        "item",
-                        JSONObject()
-                            .put("type", "function_call_output")
-                            .put("call_id", callId)
-                            .put("output", output.toString())
-                    )
-            ) == true
+            val events = buildRealtimeToolOutputEvents(payload)
+            val sentOutput = session?.sendJsonEvent(events[0]) == true
             if (sentOutput) {
-                session?.sendJsonEvent(JSONObject().put("type", "response.create"))
+                session?.sendJsonEvent(events[1])
                 updateState(state.copy(status = VoiceRuntimeStatus.THINKING, error = null, latestTaskResult = taskResultSummary(payload)))
             } else {
                 updateState(state.copy(error = "Could not send realtime tool output."))

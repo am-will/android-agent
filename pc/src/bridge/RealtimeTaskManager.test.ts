@@ -1,0 +1,144 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { RealtimeTaskManager } from "./RealtimeTaskManager.js";
+import type { AgentRunResult } from "../dispatcher/AgentClient.js";
+import type { RealtimeOutboundMessage, RealtimeToolCallMessage } from "../protocol/messages.js";
+
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve!: (value: T) => void;
+  reject!: (error: Error) => void;
+
+  constructor() {
+    this.promise = new Promise<T>((resolve, reject) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+  }
+}
+
+class FakeDispatcher {
+  readonly requests: string[] = [];
+  readonly stopReasons: string[] = [];
+  results: Array<Promise<AgentRunResult>> = [];
+
+  async handleUserRequest(request: { text: string }): Promise<AgentRunResult> {
+    this.requests.push(request.text);
+    return await (this.results.shift() ?? Promise.resolve({ finalMessage: `done ${request.text}` }));
+  }
+
+  async stopActiveTurn(_deviceId: string, reason?: string): Promise<void> {
+    this.stopReasons.push(reason ?? "");
+  }
+}
+
+function toolCall(callId: string, instruction: string, extraArgs: Record<string, unknown> = {}): RealtimeToolCallMessage {
+  return {
+    type: "realtime.tool_call",
+    deviceId: "pixel",
+    callId,
+    name: "run_phone_task",
+    arguments: {
+      instruction,
+      ...extraArgs
+    }
+  };
+}
+
+function createHarness(options: { taskTimeoutMs?: number } = {}) {
+  const dispatcher = new FakeDispatcher();
+  const messages: RealtimeOutboundMessage[] = [];
+  const manager = new RealtimeTaskManager({
+    dispatcher,
+    sendRealtime: (_deviceId, message) => messages.push(message),
+    taskTimeoutMs: options.taskTimeoutMs
+  });
+  return { dispatcher, manager, messages };
+}
+
+function results(messages: RealtimeOutboundMessage[]) {
+  return messages.filter((message) => message.type === "realtime.tool_result");
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.ok(predicate());
+}
+
+test("rejects invalid run_phone_task arguments", async () => {
+  const { manager, messages } = createHarness();
+
+  await manager.handleToolCall(toolCall("call_1", ""));
+
+  assert.equal(results(messages).at(-1)?.ok, false);
+  assert.match(results(messages).at(-1)?.error ?? "", /non-empty instruction/);
+});
+
+test("queues one active task at a time", async () => {
+  const first = new Deferred<AgentRunResult>();
+  const second = new Deferred<AgentRunResult>();
+  const { dispatcher, manager, messages } = createHarness();
+  dispatcher.results = [first.promise, second.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Messages"));
+  await manager.handleToolCall(toolCall("call_2", "Open Alice"));
+
+  assert.deepEqual(dispatcher.requests, ["Open Messages"]);
+  assert.equal(messages.filter((message) => message.type === "realtime.task_status").at(-1)?.queued, 1);
+
+  first.resolve({ finalMessage: "Messages opened" });
+  await waitFor(() => dispatcher.requests.length === 2);
+  second.resolve({ finalMessage: "Alice opened" });
+  await waitFor(() => results(messages).length === 2);
+
+  assert.deepEqual(dispatcher.requests, ["Open Messages", "Open Alice"]);
+  assert.equal(results(messages)[0]?.status, "completed");
+  assert.equal(results(messages)[1]?.status, "completed");
+});
+
+test("ignores duplicate call IDs while active", async () => {
+  const first = new Deferred<AgentRunResult>();
+  const { dispatcher, manager } = createHarness();
+  dispatcher.results = [first.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+
+  assert.deepEqual(dispatcher.requests, ["Open Settings"]);
+  first.resolve({ finalMessage: "Settings opened" });
+});
+
+test("times out and stops a hung task", async () => {
+  const never = new Deferred<AgentRunResult>();
+  const { dispatcher, manager, messages } = createHarness({ taskTimeoutMs: 1 });
+  dispatcher.results = [never.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await waitFor(() => results(messages).some((message) => message.status === "timeout"));
+
+  assert.equal(dispatcher.stopReasons.length, 1);
+  assert.equal(results(messages).at(-1)?.status, "timeout");
+});
+
+test("interrupt cancels the active task before starting the next one", async () => {
+  const first = new Deferred<AgentRunResult>();
+  const second = new Deferred<AgentRunResult>();
+  const { dispatcher, manager, messages } = createHarness();
+  dispatcher.results = [first.promise, second.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await manager.handleToolCall(toolCall("call_2", "Open Messages", { urgency: "interrupt" }));
+  await waitFor(() => dispatcher.requests.length === 2);
+
+  assert.equal(dispatcher.stopReasons.length, 1);
+  assert.equal(results(messages).find((message) => message.callId === "call_1")?.status, "cancelled");
+  assert.deepEqual(dispatcher.requests, ["Open Settings", "Open Messages"]);
+
+  second.resolve({ finalMessage: "Messages opened" });
+  first.resolve({ finalMessage: "Settings opened late" });
+});

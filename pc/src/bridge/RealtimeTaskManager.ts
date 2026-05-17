@@ -3,7 +3,7 @@ import type { RealtimeOutboundMessage, RealtimeToolCallMessage, RealtimeToolResu
 import type { AuditLog } from "./AuditLog.js";
 
 interface RealtimeTaskManagerOptions {
-  dispatcher: Dispatcher;
+  dispatcher: Pick<Dispatcher, "handleUserRequest" | "stopActiveTurn">;
   sendRealtime: (deviceId: string, message: RealtimeOutboundMessage) => void;
   audit?: AuditLog;
   maxQueueSize?: number;
