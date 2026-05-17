@@ -72,6 +72,12 @@ class AccessibilityCommandExecutor(
                 waitMs(350)
                 CommandResult(true, observer.observe(service))
             }
+            "tap_normalized" -> {
+                service ?: return accessibilityMissing()
+                tapNormalized(service, args.getDouble("xPct").toFloat(), args.getDouble("yPct").toFloat())
+                waitMs(350)
+                CommandResult(true, observer.observe(service))
+            }
             "long_press_node" -> {
                 service ?: return accessibilityMissing()
                 val node = requireNode(args.getString("nodeId"))
@@ -222,10 +228,10 @@ class AccessibilityCommandExecutor(
         if (scrollable?.performAction(action) == true) {
             return
         }
-        val display = context.resources.displayMetrics
-        val midX = display.widthPixels / 2f
-        val midY = display.heightPixels / 2f
-        val delta = display.heightPixels * 0.3f
+        val display = ScreenObserver.realDisplaySize(service)
+        val midX = display.widthPx / 2f
+        val midY = display.heightPx / 2f
+        val delta = display.heightPx * 0.3f
         when (direction) {
             "up" -> swipe(service, midX, midY - delta, midX, midY + delta, 350)
             "left" -> swipe(service, midX - delta, midY, midX + delta, midY, 350)
@@ -236,6 +242,13 @@ class AccessibilityCommandExecutor(
 
     private suspend fun tap(service: PhoneAccessibilityService, x: Float, y: Float) {
         gesture(service, x, y, x, y, 80)
+    }
+
+    private suspend fun tapNormalized(service: PhoneAccessibilityService, xPct: Float, yPct: Float) {
+        val x = xPct.coerceIn(0f, 1f)
+        val y = yPct.coerceIn(0f, 1f)
+        val display = ScreenObserver.realDisplaySize(service)
+        tap(service, x * display.widthPx, y * display.heightPx)
     }
 
     private suspend fun swipe(service: PhoneAccessibilityService, startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long) {
@@ -280,7 +293,7 @@ class AccessibilityCommandExecutor(
         if (Build.VERSION.SDK_INT < 30) {
             return@withAgentChromeSuppressed CommandResult(false, observer.observe(service), "Screenshots require Android API 30+")
         }
-        val encoded = suspendCancellableCoroutine<String?> { continuation ->
+        val encoded = suspendCancellableCoroutine<EncodedScreenshot?> { continuation ->
             service.takeScreenshot(
                 Display.DEFAULT_DISPLAY,
                 Executors.newSingleThreadExecutor(),
@@ -296,7 +309,14 @@ class AccessibilityCommandExecutor(
             )
         }
         if (encoded != null) {
-            CommandResult(true, observer.observe(service), screenshotBase64 = encoded)
+            CommandResult(
+                ok = true,
+                observation = observer.observe(service),
+                screenshotBase64 = encoded.base64,
+                screenshot = JSONObject()
+                    .put("widthPx", encoded.widthPx)
+                    .put("heightPx", encoded.heightPx)
+            )
         } else {
             CommandResult(false, observer.observe(service), "Screenshot capture failed")
         }
@@ -333,12 +353,16 @@ class AccessibilityCommandExecutor(
         return CommandResult(false, null, "Accessibility service is not enabled")
     }
 
-    private fun encodeScreenshot(buffer: HardwareBuffer, colorSpace: android.graphics.ColorSpace): String? {
+    private fun encodeScreenshot(buffer: HardwareBuffer, colorSpace: android.graphics.ColorSpace): EncodedScreenshot? {
         return try {
             val bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace)?.copy(Bitmap.Config.ARGB_8888, false) ?: return null
             val bytes = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.PNG, 85, bytes)
-            Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)
+            EncodedScreenshot(
+                base64 = Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP),
+                widthPx = bitmap.width,
+                heightPx = bitmap.height
+            )
         } finally {
             buffer.close()
         }
@@ -357,6 +381,12 @@ class AccessibilityCommandExecutor(
         kotlinx.coroutines.delay(ms.coerceIn(0, 120_000))
     }
 }
+
+private data class EncodedScreenshot(
+    val base64: String,
+    val widthPx: Int,
+    val heightPx: Int
+)
 
 private fun AccessibilityNodeInfo.findFirstEditable(): AccessibilityNodeInfo? {
     if (isEditable) return this

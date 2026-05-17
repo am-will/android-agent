@@ -6,6 +6,7 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
+import android.app.UiModeManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
@@ -105,10 +106,10 @@ class OverlayController(
             background = bubbleBackgroundForVoiceState(lastVoiceState)
             contentDescription = "Android Agent"
             elevation = dp(8).toFloat()
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             setOnClickListener { togglePanel() }
         }
-        val params = overlayParams(width = dp(76), height = dp(76), focusable = false).apply {
+        val params = overlayParams(width = dp(88), height = dp(88), focusable = false).apply {
             gravity = Gravity.TOP or Gravity.START
             x = lastBubbleX ?: dp(16)
             y = lastBubbleY ?: dp(160)
@@ -322,12 +323,14 @@ class OverlayController(
             setTextColor(palette.primaryText)
             setHintTextColor(palette.secondaryText)
             background = controlDrawable(palette)
+            backgroundTintList = null
             setPadding(dp(15), dp(11), dp(15), dp(11))
         }
         composerInput = input
         transcriptionMicButton = ImageButton(context).apply {
             setImageResource(R.drawable.ic_mic)
             background = accentDrawable(palette, dp(18))
+            backgroundTintList = null
             contentDescription = "Start voice transcription"
             setColorFilter(Color.WHITE)
             setPadding(dp(10), dp(10), dp(10), dp(10))
@@ -346,6 +349,7 @@ class OverlayController(
             visibility = View.GONE
             setTextColor(palette.primaryText)
             background = controlDrawable(palette)
+            backgroundTintList = null
             setOnClickListener { onCancelTranscription() }
         }
         val composerRow = LinearLayout(context).apply {
@@ -373,7 +377,8 @@ class OverlayController(
             text = "Stop"
             isAllCaps = false
             setTextColor(palette.primaryText)
-            background = controlDrawable(palette)
+            background = secondaryButtonDrawable(palette)
+            backgroundTintList = null
             setOnClickListener {
                 onStop()
                 setStatus("Stop requested")
@@ -384,6 +389,7 @@ class OverlayController(
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = accentDrawable(palette, dp(18))
+            backgroundTintList = null
             setOnClickListener {
                 val text = input.text.toString().trim()
                 if (text.isNotEmpty()) {
@@ -405,6 +411,7 @@ class OverlayController(
         val settingsButton = ImageButton(context).apply {
             setImageResource(R.drawable.ic_settings_gear)
             background = controlDrawable(palette, dp(14))
+            backgroundTintList = null
             contentDescription = "Open Android Agent settings"
             setColorFilter(palette.primaryText)
             setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -419,6 +426,7 @@ class OverlayController(
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = accentDrawable(palette, dp(14))
+            backgroundTintList = null
             contentDescription = "Start realtime voice mode"
             setOnClickListener {
                 onStartVoice()
@@ -534,7 +542,8 @@ class OverlayController(
             text = "Mute"
             isAllCaps = false
             setTextColor(palette.primaryText)
-            background = controlDrawable(palette)
+            background = secondaryButtonDrawable(palette)
+            backgroundTintList = null
             setOnClickListener { onToggleVoiceMute() }
         }
         voiceHangupButton = Button(context).apply {
@@ -542,6 +551,7 @@ class OverlayController(
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = accentDrawable(palette, dp(18))
+            backgroundTintList = null
             setOnClickListener { onStopVoice() }
         }
         val voiceActions = LinearLayout(context).apply {
@@ -639,7 +649,7 @@ class OverlayController(
     private fun applyBubbleVoiceIndicator(state: VoiceRuntimeState) {
         val bubble = bubbleView ?: return
         bubble.background = bubbleBackgroundForVoiceState(state)
-        bubble.elevation = if (state.status == VoiceRuntimeStatus.IDLE) dp(8).toFloat() else dp(22).toFloat()
+        bubble.elevation = if (state.status == VoiceRuntimeStatus.IDLE) dp(8).toFloat() else dp(30).toFloat()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val shadowColor = when (state.status) {
                 VoiceRuntimeStatus.CONNECTING,
@@ -671,7 +681,7 @@ class OverlayController(
             shape = GradientDrawable.OVAL
             gradientType = GradientDrawable.RADIAL_GRADIENT
             setGradientCenter(0.5f, 0.5f)
-            setGradientRadius(dp(38).toFloat())
+            setGradientRadius(dp(48).toFloat())
             colors = intArrayOf(centerColor, midColor, Color.TRANSPARENT)
         }
     }
@@ -932,11 +942,11 @@ class OverlayController(
         private const val VOICE_PULSE_MS = 720L
         private const val VOICE_MODAL_MAX_SCREEN_FRACTION = 0.40f
         private const val VOICE_GLOW_RED = 0xFFE53935.toInt()
-        private const val VOICE_GLOW_RED_CENTER = 0xF2E53935.toInt()
-        private const val VOICE_GLOW_RED_MID = 0x99E53935.toInt()
-        private const val VOICE_GLOW_GREEN = 0xFF43A047.toInt()
-        private const val VOICE_GLOW_GREEN_CENTER = 0xF243A047.toInt()
-        private const val VOICE_GLOW_GREEN_MID = 0x9943A047.toInt()
+        private const val VOICE_GLOW_RED_CENTER = 0xF2FF453A.toInt()
+        private const val VOICE_GLOW_RED_MID = 0xB3FF453A.toInt()
+        private const val VOICE_GLOW_GREEN = 0xFF30D96B.toInt()
+        private const val VOICE_GLOW_GREEN_CENTER = 0xF230D96B.toInt()
+        private const val VOICE_GLOW_GREEN_MID = 0xB330D96B.toInt()
     }
 
     private fun openSettings() {
@@ -1061,28 +1071,34 @@ class OverlayController(
 
     private fun overlayPalette(): OverlayPalette {
         val isDark = isNightMode()
-        val baseSurface = themeColor(
-            android.R.attr.colorBackground,
-            if (isDark) 0xFF121318.toInt() else 0xFFF8FAFC.toInt()
-        )
-        val primaryText = themeColor(
-            android.R.attr.textColorPrimary,
-            if (isDark) 0xFFEDEFF5.toInt() else 0xFF111827.toInt()
-        )
-        val secondaryText = themeColor(
-            android.R.attr.textColorSecondary,
-            if (isDark) 0xFFAAB0BD.toInt() else 0xFF64748B.toInt()
-        )
-        val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
-        val surface = if (isDark) blend(baseSurface, Color.WHITE, 0.08f) else blend(baseSurface, accent, 0.035f)
+        val primaryText = if (isDark) {
+            0xFFF8FAFC.toInt()
+        } else {
+            themeColor(android.R.attr.textColorPrimary, 0xFF111827.toInt())
+        }
+        val secondaryText = if (isDark) {
+            0xFFB7C0CF.toInt()
+        } else {
+            themeColor(android.R.attr.textColorSecondary, 0xFF64748B.toInt())
+        }
+        val accent = if (isDark) {
+            0xFF7C9CFF.toInt()
+        } else {
+            themeColor(android.R.attr.colorAccent, 0xFF245BFF.toInt())
+        }
+        val surface = if (isDark) {
+            0xFF171C26.toInt()
+        } else {
+            0xFFEEF2F8.toInt()
+        }
         return OverlayPalette(
             surface = surface,
-            recessedSurface = if (isDark) blend(surface, Color.BLACK, 0.24f) else blend(surface, Color.BLACK, 0.045f),
-            controlSurface = if (isDark) blend(surface, Color.WHITE, 0.07f) else withAlpha(Color.WHITE, 0xEE),
+            recessedSurface = if (isDark) 0xFF0B1018.toInt() else 0xFFD8DEE9.toInt(),
+            controlSurface = if (isDark) 0xFF252D3A.toInt() else 0xFFF8FAFD.toInt(),
             primaryText = primaryText,
             secondaryText = secondaryText,
-            border = if (isDark) withAlpha(Color.WHITE, 0x2E) else withAlpha(Color.BLACK, 0x1C),
-            highlight = if (isDark) withAlpha(Color.WHITE, 0x34) else withAlpha(Color.WHITE, 0xCC),
+            border = if (isDark) 0xFF5D6A7D.toInt() else 0xFFCBD5E1.toInt(),
+            highlight = if (isDark) 0xFF30394A.toInt() else Color.WHITE,
             accent = accent
         )
     }
@@ -1095,8 +1111,8 @@ class OverlayController(
                 roundedDrawable(Color.TRANSPARENT, dp(26), palette.border)
             )
         ).apply {
-            setLayerInset(1, dp(1), dp(1), dp(1), dp(2))
-            setLayerInset(2, dp(1), dp(1), dp(1), dp(2))
+            setLayerInset(1, dp(2), dp(2), dp(2), dp(3))
+            setLayerInset(2, dp(2), dp(2), dp(2), dp(3))
         }
     }
 
@@ -1113,6 +1129,10 @@ class OverlayController(
 
     private fun controlDrawable(palette: OverlayPalette, radius: Int = dp(18)): GradientDrawable {
         return roundedDrawable(palette.controlSurface, radius, palette.border)
+    }
+
+    private fun secondaryButtonDrawable(palette: OverlayPalette, radius: Int = dp(18)): GradientDrawable {
+        return roundedDrawable(palette.controlSurface, radius, palette.border, dp(2))
     }
 
     private fun accentDrawable(palette: OverlayPalette, radius: Int): GradientDrawable {
@@ -1141,7 +1161,13 @@ class OverlayController(
     }
 
     private fun isNightMode(): Boolean {
-        return (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val configurationNightMode = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val systemNightMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            (context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)?.nightMode == UiModeManager.MODE_NIGHT_YES
+        } else {
+            false
+        }
+        return configurationNightMode || systemNightMode
     }
 
     private fun withAlpha(color: Int, alpha: Int): Int {

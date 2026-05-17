@@ -176,6 +176,7 @@ class PhoneWebSocketClient(
                 .put("observation", result.observation)
                 .put("error", result.error)
             result.screenshotBase64?.let { response.put("screenshotBase64", it) }
+            result.screenshot?.let { response.put("screenshot", it) }
             webSocket.send(response.toString())
         }
     }

@@ -24,6 +24,17 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
 }
 ```
 
+Coordinate taps use full-screen pixels, including the status and navigation bars. When a caller chooses a point from a screenshot that may have been shown at a scaled size, prefer `tap_normalized`:
+
+```json
+{
+  "id": "cmd_124",
+  "type": "command",
+  "command": "tap_normalized",
+  "args": { "xPct": 0.5, "yPct": 0.25 }
+}
+```
+
 ## Result
 
 ```json
@@ -38,9 +49,15 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
     "screenSummary": "Settings | Connections | Notifications",
     "nodes": []
   },
+  "screenshot": {
+    "widthPx": 1080,
+    "heightPx": 2340
+  },
   "error": null
 }
 ```
+
+`take_screenshot` results include `screenshotBase64` plus `screenshot.widthPx` and `screenshot.heightPx`. Those dimensions are the source of truth for mapping visual screenshot positions back to phone coordinates.
 
 ## User Request
 

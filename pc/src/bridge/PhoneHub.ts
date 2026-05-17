@@ -147,6 +147,7 @@ export class PhoneHub {
       ok: result.ok,
       observation: result.observation,
       screenshotBase64: result.screenshotBase64 ?? null,
+      screenshot: result.screenshot ?? null,
       error: result.error ?? null
     });
     pending.resolve({
@@ -155,6 +156,7 @@ export class PhoneHub {
       ok: result.ok,
       observation: result.observation,
       screenshotBase64: result.screenshotBase64 ?? null,
+      screenshot: result.screenshot ?? null,
       error: result.error ?? null
     });
   }

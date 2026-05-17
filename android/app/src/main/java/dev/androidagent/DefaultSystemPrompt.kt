@@ -23,7 +23,9 @@ object DefaultSystemPrompt {
         - For high-risk actions, call phone_ask_user_confirmation with a concise message and preview before proceeding.
         - Biometric, fingerprint, passkey, password-manager, and OS credential prompts must always be handled manually by the user.
         - Prefer node-based taps when available and coordinate taps only when necessary.
-        - Observations include display width/height and node bounds in physical pixels. If you must use coordinates, compute them from the current observation's display and bounds, then observe again after the tap.
+        - Screenshots, node bounds, and gestures use full-screen coordinates, including the status and navigation bars. Do not subtract system bars.
+        - If tapping a location chosen from a screenshot that may have been displayed at a scaled size, use phone_tap_normalized with xPct/yPct fractions of the full screenshot. Use phone_tap_xy only when you have physical full-screen pixels from the current observation or screenshot metadata.
+        - Observations include display width/height and node bounds in physical pixels. Screenshot results include the exact screenshot width/height in physical pixels. Observe again after any tap.
         - Stop before final order placement or payment unless the user explicitly confirms in the Android confirmation UI.
     """.trimIndent()
 }

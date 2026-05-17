@@ -1,6 +1,10 @@
 package dev.androidagent.accessibility
 
+import android.content.Context
 import android.graphics.Rect
+import android.os.Build
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,19 +22,11 @@ class ScreenObserver {
         if (root != null) {
             walk(root, nodes, summary, 0)
         }
-        val displayMetrics = service.resources.displayMetrics
         return JSONObject()
             .put("deviceId", android.os.Build.MODEL)
             .put("package", root?.packageName?.toString() ?: "")
             .put("activity", service.lastActivityClassName ?: "")
-            .put(
-                "display",
-                JSONObject()
-                    .put("widthPx", displayMetrics.widthPixels)
-                    .put("heightPx", displayMetrics.heightPixels)
-                    .put("density", displayMetrics.density)
-                    .put("densityDpi", displayMetrics.densityDpi)
-            )
+            .put("display", displayJson(service))
             .put("screenSummary", summary.take(12).joinToString(" | "))
             .put("nodes", nodes)
     }
@@ -69,4 +65,38 @@ class ScreenObserver {
             node.getChild(i)?.let { child -> walk(child, out, summary, depth + 1) }
         }
     }
+
+    companion object {
+        fun displayJson(service: PhoneAccessibilityService): JSONObject {
+            val size = realDisplaySize(service)
+            val displayMetrics = service.resources.displayMetrics
+            return JSONObject()
+                .put("widthPx", size.widthPx)
+                .put("heightPx", size.heightPx)
+                .put("density", displayMetrics.density)
+                .put("densityDpi", displayMetrics.densityDpi)
+        }
+
+        fun realDisplaySize(service: PhoneAccessibilityService): DisplaySize {
+            val windowManager = service.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            if (windowManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = windowManager.currentWindowMetrics.bounds
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    return DisplaySize(bounds.width(), bounds.height())
+                }
+            }
+
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager?.defaultDisplay?.getRealMetrics(metrics)
+            if (metrics.widthPixels > 0 && metrics.heightPixels > 0) {
+                return DisplaySize(metrics.widthPixels, metrics.heightPixels)
+            }
+
+            val fallback = service.resources.displayMetrics
+            return DisplaySize(fallback.widthPixels, fallback.heightPixels)
+        }
+    }
 }
+
+data class DisplaySize(val widthPx: Int, val heightPx: Int)

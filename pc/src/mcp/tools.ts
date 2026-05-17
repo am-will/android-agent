@@ -64,6 +64,14 @@ export function registerPhoneTools(server: McpServer, client = new PhoneToolClie
 
   register(server, client, "phone_tap_node", "Tap an observed accessibility node.", { nodeId: z.string() }, "tap_node");
   register(server, client, "phone_tap_xy", "Tap screen coordinates.", { x: z.number(), y: z.number() }, "tap_xy");
+  register(
+    server,
+    client,
+    "phone_tap_normalized",
+    "Tap normalized full-screen coordinates from 0 to 1. Use this for coordinates derived from a screenshot shown at a scaled size.",
+    { xPct: z.number().min(0).max(1), yPct: z.number().min(0).max(1) },
+    "tap_normalized"
+  );
   register(server, client, "phone_long_press_node", "Long press an observed accessibility node.", { nodeId: z.string() }, "long_press_node");
   register(
     server,

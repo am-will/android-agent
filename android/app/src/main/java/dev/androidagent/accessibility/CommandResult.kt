@@ -6,5 +6,6 @@ data class CommandResult(
     val ok: Boolean,
     val observation: JSONObject?,
     val error: String? = null,
-    val screenshotBase64: String? = null
+    val screenshotBase64: String? = null,
+    val screenshot: JSONObject? = null
 )

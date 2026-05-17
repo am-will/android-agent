@@ -5,6 +5,7 @@ export const PHONE_COMMANDS = [
   "open_app",
   "tap_node",
   "tap_xy",
+  "tap_normalized",
   "long_press_node",
   "type_text",
   "scroll",
@@ -40,6 +41,13 @@ export const resultMessageSchema = z.object({
   ok: z.boolean(),
   observation: z.unknown().optional().nullable(),
   screenshotBase64: z.string().optional().nullable(),
+  screenshot: z
+    .object({
+      widthPx: z.number().int().positive(),
+      heightPx: z.number().int().positive()
+    })
+    .optional()
+    .nullable(),
   error: z.string().optional().nullable()
 });
 
@@ -198,6 +206,10 @@ export interface PhoneCommandResult {
   ok: boolean;
   observation?: unknown;
   screenshotBase64?: string | null;
+  screenshot?: {
+    widthPx: number;
+    heightPx: number;
+  } | null;
   error?: string | null;
 }
 
