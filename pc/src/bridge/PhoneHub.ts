@@ -119,6 +119,18 @@ export class PhoneHub {
     });
   }
 
+  cancelPendingCommands(deviceId: string, reason: string): void {
+    for (const [id, pending] of this.pending) {
+      if (pending.deviceId !== deviceId) {
+        continue;
+      }
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      this.audit?.record("phone_command_cancelled", deviceId, { id, reason });
+      pending.reject(new Error(reason));
+    }
+  }
+
   sendRealtime(deviceId: string, message: RealtimeOutboundMessage): void {
     this.sendMessage(deviceId, message);
   }

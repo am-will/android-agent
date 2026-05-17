@@ -20,6 +20,7 @@ class Deferred<T> {
 class FakeDispatcher {
   readonly requests: string[] = [];
   readonly stopReasons: string[] = [];
+  readonly steers: string[] = [];
   results: Array<Promise<AgentRunResult>> = [];
 
   async handleUserRequest(request: { text: string }): Promise<AgentRunResult> {
@@ -29,6 +30,10 @@ class FakeDispatcher {
 
   async stopActiveTurn(_deviceId: string, reason?: string): Promise<void> {
     this.stopReasons.push(reason ?? "");
+  }
+
+  async steerActiveTurn(_deviceId: string, guidance: string): Promise<void> {
+    this.steers.push(guidance);
   }
 }
 
@@ -45,6 +50,16 @@ function toolCall(callId: string, instruction: string, extraArgs: Record<string,
   };
 }
 
+function namedToolCall(callId: string, name: string, args: Record<string, unknown> = {}): RealtimeToolCallMessage {
+  return {
+    type: "realtime.tool_call",
+    deviceId: "pixel",
+    callId,
+    name,
+    arguments: args
+  };
+}
+
 function createHarness(options: { taskTimeoutMs?: number } = {}) {
   const dispatcher = new FakeDispatcher();
   const messages: RealtimeOutboundMessage[] = [];
@@ -54,6 +69,24 @@ function createHarness(options: { taskTimeoutMs?: number } = {}) {
     taskTimeoutMs: options.taskTimeoutMs
   });
   return { dispatcher, manager, messages };
+}
+
+function createHarnessWithSearch(output = "search result") {
+  const dispatcher = new FakeDispatcher();
+  const messages: RealtimeOutboundMessage[] = [];
+  const queries: string[] = [];
+  const manager = new RealtimeTaskManager({
+    dispatcher,
+    sendRealtime: (_deviceId, message) => messages.push(message),
+    webSearch: {
+      async search({ query }) {
+        queries.push(query);
+        return output;
+      }
+    },
+    getRealtimeApiKey: () => "test-key"
+  });
+  return { dispatcher, manager, messages, queries };
 }
 
 function results(messages: RealtimeOutboundMessage[]) {
@@ -141,4 +174,45 @@ test("interrupt cancels the active task before starting the next one", async () 
 
   second.resolve({ finalMessage: "Messages opened" });
   first.resolve({ finalMessage: "Settings opened late" });
+});
+
+test("stop_phone_task cancels active and queued realtime phone tasks", async () => {
+  const first = new Deferred<AgentRunResult>();
+  const { dispatcher, manager, messages } = createHarness();
+  dispatcher.results = [first.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await manager.handleToolCall(toolCall("call_2", "Open Messages"));
+  await manager.handleToolCall(namedToolCall("call_stop", "stop_phone_task", { reason: "User said stop" }));
+
+  assert.deepEqual(dispatcher.stopReasons, ["User said stop"]);
+  assert.equal(results(messages).find((message) => message.callId === "call_1")?.status, "cancelled");
+  assert.equal(results(messages).find((message) => message.callId === "call_2")?.status, "cancelled");
+  assert.equal(results(messages).find((message) => message.callId === "call_stop")?.status, "completed");
+
+  first.resolve({ finalMessage: "Settings opened late" });
+});
+
+test("steer_phone_task injects guidance into active turn", async () => {
+  const first = new Deferred<AgentRunResult>();
+  const { dispatcher, manager, messages } = createHarness();
+  dispatcher.results = [first.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await manager.handleToolCall(namedToolCall("call_steer", "steer_phone_task", { guidance: "Actually open Bluetooth settings." }));
+
+  assert.deepEqual(dispatcher.steers, ["Actually open Bluetooth settings."]);
+  assert.equal(results(messages).find((message) => message.callId === "call_steer")?.status, "completed");
+
+  first.resolve({ finalMessage: "Settings opened" });
+});
+
+test("web_search returns search output without starting a phone task", async () => {
+  const { dispatcher, manager, messages, queries } = createHarnessWithSearch("It is sunny.");
+
+  await manager.handleToolCall(namedToolCall("call_search", "web_search", { query: "El Paso weather today" }));
+
+  assert.deepEqual(queries, ["El Paso weather today"]);
+  assert.deepEqual(dispatcher.requests, []);
+  assert.equal(results(messages).find((message) => message.callId === "call_search")?.output, "It is sunny.");
 });

@@ -7,6 +7,7 @@ export interface BridgeConfig {
   openAiApiKey?: string;
   openAiRealtimeModel: string;
   openAiRealtimeVoice: string;
+  openAiWebSearchModel: string;
 }
 
 export function getBridgeConfig(): BridgeConfig {
@@ -19,6 +20,7 @@ export function getBridgeConfig(): BridgeConfig {
     bridgeUrl: process.env.PHONE_AGENT_BRIDGE_URL ?? `http://127.0.0.1:${port}`,
     openAiApiKey: process.env.OPENAI_API_KEY,
     openAiRealtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2",
-    openAiRealtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "marin"
+    openAiRealtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "marin",
+    openAiWebSearchModel: process.env.OPENAI_WEB_SEARCH_MODEL ?? "gpt-5.5"
   };
 }

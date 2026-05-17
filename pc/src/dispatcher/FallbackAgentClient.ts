@@ -13,6 +13,10 @@ export class FallbackAgentClient implements AgentClient {
     return;
   }
 
+  async steer(): Promise<void> {
+    return;
+  }
+
   async close(): Promise<void> {
     return;
   }

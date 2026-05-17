@@ -10,12 +10,16 @@ export interface OpenAiRealtimeStartOptions {
 export interface OpenAiRealtimeSession {
   deviceId: string;
   callId?: string;
+  apiKey?: string;
 }
 
 const VOICE_PROMPT = `
 You are the Android agent in a live voice conversation. Keep responses short and conversational.
 When the user asks for an actionable phone task, briefly acknowledge that you will work on it and call the run_phone_task tool.
 Do not claim a phone task is complete until tool output is returned.
+If the user interrupts, corrects, or adds information while a phone task is running, use steer_phone_task to steer the active turn.
+If the user asks to stop, pause, cancel, or leave the phone as-is, use stop_phone_task immediately. Do not call run_phone_task for stop requests.
+If the user asks a current-events or factual lookup that does not require controlling the phone, use web_search and answer from its result instead of running a phone task.
 Ask a short clarification question when the instruction is ambiguous.
 Confirm only when an action is risky or irreversible, and never bypass Android or Codex safety confirmations.
 `.trim();
@@ -42,6 +46,57 @@ const RUN_PHONE_TASK_TOOL = {
   }
 } as const;
 
+const STEER_PHONE_TASK_TOOL = {
+  type: "function",
+  name: "steer_phone_task",
+  description: "Inject new user guidance into the currently running Android phone automation task without restarting it.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      guidance: {
+        type: "string",
+        description: "The user's correction, updated goal, or extra context to steer the active phone task."
+      }
+    },
+    required: ["guidance"]
+  }
+} as const;
+
+const STOP_PHONE_TASK_TOOL = {
+  type: "function",
+  name: "stop_phone_task",
+  description: "Stop the currently running Android phone automation task and clear any queued realtime phone tasks.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      reason: {
+        type: "string",
+        description: "A short reason for stopping the active phone task."
+      }
+    },
+    required: []
+  }
+} as const;
+
+const WEB_SEARCH_TOOL = {
+  type: "function",
+  name: "web_search",
+  description: "Search the web for current information when a question can be answered without using the Android phone.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      query: {
+        type: "string",
+        description: "The concise web search query."
+      }
+    },
+    required: ["query"]
+  }
+} as const;
+
 function callIdFromLocation(location: string | null): string | undefined {
   if (!location) {
     return undefined;
@@ -62,7 +117,7 @@ export class OpenAiRealtimeClient {
       type: "realtime",
       model: this.config.openAiRealtimeModel,
       instructions: [options.systemPrompt?.trim(), VOICE_PROMPT].filter(Boolean).join("\n\n"),
-      tools: [RUN_PHONE_TASK_TOOL],
+      tools: [RUN_PHONE_TASK_TOOL, STEER_PHONE_TASK_TOOL, STOP_PHONE_TASK_TOOL, WEB_SEARCH_TOOL],
       tool_choice: "auto",
       audio: {
         output: {
@@ -93,13 +148,14 @@ export class OpenAiRealtimeClient {
       answerSdp: body,
       session: {
         deviceId: options.deviceId,
-        callId: callIdFromLocation(response.headers.get("location"))
+        callId: callIdFromLocation(response.headers.get("location")),
+        apiKey
       }
     };
   }
 
   async stop(session: OpenAiRealtimeSession): Promise<void> {
-    const apiKey = this.config.openAiApiKey?.trim();
+    const apiKey = session.apiKey?.trim() || this.config.openAiApiKey?.trim();
     if (!apiKey || !session.callId) {
       return;
     }

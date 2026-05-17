@@ -212,31 +212,54 @@ export class CodexAppServerClient implements AgentClient {
     this.child?.kill();
   }
 
+  async steer(text: string): Promise<void> {
+    const pendingTurn = this.pendingTurn;
+    if (!pendingTurn) {
+      throw new Error("No active Codex turn to steer");
+    }
+    await this.request("turn/steer", {
+      threadId: pendingTurn.threadId,
+      expectedTurnId: pendingTurn.turnId,
+      input: [{ type: "text", text }]
+    });
+    this.audit?.record("codex_turn_steered", undefined, {
+      threadId: pendingTurn.threadId,
+      turnId: pendingTurn.turnId,
+      text
+    });
+  }
+
   async interrupt(reason = "Stopped by user"): Promise<void> {
     const pendingTurn = this.pendingTurn;
     if (pendingTurn) {
       clearTimeout(pendingTurn.timer);
       this.pendingTurn = undefined;
-      pendingTurn.resolve({
-        threadId: pendingTurn.threadId,
-        turnId: pendingTurn.turnId,
-        finalMessage: `BLOCKED: ${reason}`,
-        error: reason
-      });
+      try {
+        await this.request("turn/interrupt", {
+          threadId: pendingTurn.threadId,
+          turnId: pendingTurn.turnId
+        });
+        this.audit?.record("codex_turn_interrupted", undefined, {
+          threadId: pendingTurn.threadId,
+          turnId: pendingTurn.turnId,
+          reason
+        });
+      } catch (error) {
+        this.audit?.record("codex_turn_interrupt_error", undefined, {
+          threadId: pendingTurn.threadId,
+          turnId: pendingTurn.turnId,
+          reason,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        pendingTurn.resolve({
+          threadId: pendingTurn.threadId,
+          turnId: pendingTurn.turnId,
+          finalMessage: `BLOCKED: ${reason}`,
+          error: reason
+        });
+      }
     }
-    for (const session of this.realtimeSessions.values()) {
-      session.sink.closed(reason);
-    }
-    this.realtimeSessions.clear();
-    for (const pending of this.pending.values()) {
-      pending.reject(new Error(reason));
-    }
-    this.pending.clear();
-    this.initialized = false;
-    this.lines?.close();
-    this.lines = undefined;
-    this.child?.kill();
-    this.child = undefined;
   }
 
   private async ensureStarted(): Promise<void> {

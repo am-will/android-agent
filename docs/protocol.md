@@ -145,7 +145,9 @@ Raw non-audio realtime items are forwarded for Android-side normalization or deb
 
 ### Tool Calls
 
-Realtime voice sessions expose one high-level OpenAI function tool, `run_phone_task`. Android parses function-call events from the WebRTC data channel and relays the completed call to the PC bridge:
+Realtime voice sessions expose high-level OpenAI function tools. Android parses function-call events from the WebRTC data channel and relays the completed call to the PC bridge.
+
+Use `run_phone_task` for new actionable phone tasks:
 
 ```json
 {
@@ -161,7 +163,49 @@ Realtime voice sessions expose one high-level OpenAI function tool, `run_phone_t
 }
 ```
 
-The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and runs the instruction through the existing Codex phone-agent dispatcher. Only one task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` stop the active Codex turn before starting the new task.
+The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and runs the instruction through the existing Codex phone-agent dispatcher. Only one task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active Codex turn before starting the new task.
+
+Use `steer_phone_task` when the user corrects or adds information while a phone task is running. The bridge injects the guidance into the active Codex turn with `turn/steer`:
+
+```json
+{
+  "type": "realtime.tool_call",
+  "deviceId": "pixel",
+  "callId": "call_steer",
+  "name": "steer_phone_task",
+  "arguments": {
+    "guidance": "Stop looking in settings; use the already open Messages app."
+  }
+}
+```
+
+Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the phone as-is. The bridge cancels queued realtime tasks, rejects pending phone commands, and interrupts the active Codex turn:
+
+```json
+{
+  "type": "realtime.tool_call",
+  "deviceId": "pixel",
+  "callId": "call_stop",
+  "name": "stop_phone_task",
+  "arguments": {
+    "reason": "User said stop."
+  }
+}
+```
+
+Use `web_search` for current-information questions that do not require controlling the phone. The bridge answers through OpenAI Responses API web search and returns the text as the tool output:
+
+```json
+{
+  "type": "realtime.tool_call",
+  "deviceId": "pixel",
+  "callId": "call_search",
+  "name": "web_search",
+  "arguments": {
+    "query": "El Paso TX weather today"
+  }
+}
+```
 
 Task status updates are sent whenever the active task or queue changes:
 

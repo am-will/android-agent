@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import { AuditLog } from "./AuditLog.js";
 import { Dispatcher } from "../dispatcher/dispatcher.js";
 import { OpenAiRealtimeClient, type OpenAiRealtimeSession } from "./OpenAiRealtimeClient.js";
+import { OpenAiWebSearchClient } from "./OpenAiWebSearchClient.js";
 import { RealtimeTaskManager } from "./RealtimeTaskManager.js";
 import {
   inboundPhoneMessageSchema,
@@ -20,10 +21,13 @@ const audit = new AuditLog();
 const hub = new PhoneHub(config.defaultDeviceId, audit);
 const dispatcher = new Dispatcher(hub, audit);
 const realtimeClient = new OpenAiRealtimeClient(config);
+const webSearchClient = new OpenAiWebSearchClient(config);
 const realtimeTaskManager = new RealtimeTaskManager({
   dispatcher,
   audit,
-  sendRealtime
+  sendRealtime,
+  webSearch: webSearchClient,
+  getRealtimeApiKey: (deviceId) => realtimeSessions.get(deviceId)?.apiKey
 });
 
 const realtimeSessions = new Map<string, OpenAiRealtimeSession>();
@@ -121,6 +125,7 @@ async function handleRealtimeStop(message: RealtimeStopMessage, registeredDevice
 }
 
 async function stopAgentWork(deviceId: string, reason: string): Promise<void> {
+  hub.cancelPendingCommands(deviceId, reason);
   await realtimeTaskManager.cancelDevice(deviceId, reason);
 }
 

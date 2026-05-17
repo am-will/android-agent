@@ -19,6 +19,7 @@ export interface AgentClient {
     sink: AgentStatusSink,
     options?: { systemPrompt?: string; model?: string; reasoningEffort?: string }
   ): Promise<AgentRunResult>;
+  steer?(text: string): Promise<void>;
   interrupt?(reason?: string): Promise<void>;
   close(): Promise<void>;
 }

@@ -42,6 +42,7 @@ export class Dispatcher {
     const sink = this.statusSink(deviceId);
     this.audit?.record("turn_stop_requested", deviceId, { reason });
     sink.working("Stopping active Codex turn");
+    this.hub.cancelPendingCommands(deviceId, reason);
     if (this.client.interrupt) {
       await this.client.interrupt(reason);
       sink.done("Stopped active Codex turn");
@@ -49,6 +50,21 @@ export class Dispatcher {
     }
     await this.client.close();
     sink.done("Stopped agent client");
+  }
+
+  async steerActiveTurn(deviceId: string, guidance: string): Promise<void> {
+    const sink = this.statusSink(deviceId);
+    const text = guidance.trim();
+    if (!text) {
+      throw new Error("Steering guidance is required");
+    }
+    if (!this.client.steer) {
+      throw new Error("Active agent client does not support steering");
+    }
+
+    this.audit?.record("turn_steer_requested", deviceId, { guidance: text });
+    await this.client.steer(text);
+    sink.working(`Steered active Codex turn: ${text}`);
   }
 
   private statusSink(deviceId: string): AgentStatusSink {
