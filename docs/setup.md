@@ -36,6 +36,8 @@ Open `android/` in Android Studio or run Gradle from that directory. Install the
 5. Confirm the switch still says **On** after leaving and returning to that page.
 6. Start the foreground agent bubble.
 
+While Android Agent is running, the foreground notification includes a **Stop Turn** action. Use it to stop the active phone-control turn from the notification shade, including moments when the floating bubble is temporarily hidden during taps, swipes, or screenshots.
+
 For adb installs, build `android/app/build/outputs/apk/debug/app-debug.apk` and run:
 
 ```bash

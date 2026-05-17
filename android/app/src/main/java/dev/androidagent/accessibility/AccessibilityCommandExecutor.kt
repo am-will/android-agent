@@ -243,26 +243,28 @@ class AccessibilityCommandExecutor(
     }
 
     private suspend fun gesture(service: PhoneAccessibilityService, startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long) {
-        val path = Path().apply {
-            moveTo(startX, startY)
-            lineTo(endX, endY)
-        }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
-            .build()
-        val ok = suspendCancellableCoroutine<Boolean> { continuation ->
-            service.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    continuation.resume(true)
-                }
+        withAgentChromeSuppressed {
+            val path = Path().apply {
+                moveTo(startX, startY)
+                lineTo(endX, endY)
+            }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+                .build()
+            val ok = suspendCancellableCoroutine<Boolean> { continuation ->
+                service.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        continuation.resume(true)
+                    }
 
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    continuation.resume(false)
-                }
-            }, Handler(Looper.getMainLooper()))
-        }
-        if (!ok) {
-            throw IllegalStateException("Gesture was cancelled")
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        continuation.resume(false)
+                    }
+                }, Handler(Looper.getMainLooper()))
+            }
+            if (!ok) {
+                throw IllegalStateException("Gesture was cancelled")
+            }
         }
     }
 
@@ -274,9 +276,9 @@ class AccessibilityCommandExecutor(
         return CommandResult(true, observer.observe(service))
     }
 
-    private suspend fun takeScreenshot(service: PhoneAccessibilityService): CommandResult {
+    private suspend fun takeScreenshot(service: PhoneAccessibilityService): CommandResult = withAgentChromeSuppressed {
         if (Build.VERSION.SDK_INT < 30) {
-            return CommandResult(false, observer.observe(service), "Screenshots require Android API 30+")
+            return@withAgentChromeSuppressed CommandResult(false, observer.observe(service), "Screenshots require Android API 30+")
         }
         val encoded = suspendCancellableCoroutine<String?> { continuation ->
             service.takeScreenshot(
@@ -293,10 +295,21 @@ class AccessibilityCommandExecutor(
                 }
             )
         }
-        return if (encoded != null) {
+        if (encoded != null) {
             CommandResult(true, observer.observe(service), screenshotBase64 = encoded)
         } else {
             CommandResult(false, observer.observe(service), "Screenshot capture failed")
+        }
+    }
+
+    private suspend fun <T> withAgentChromeSuppressed(block: suspend () -> T): T {
+        val controller = overlayController ?: return block()
+        controller.suppressAgentChromeForAutomation()
+        return try {
+            waitMs(80)
+            block()
+        } finally {
+            controller.restoreAgentChromeAfterAutomation()
         }
     }
 

@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 class PhoneWebSocketClient(
     private val config: AgentConfig,
     private val commandExecutor: AccessibilityCommandExecutor,
-    private val onStatus: (String) -> Unit,
+    private val onStatus: (String, String) -> Unit,
     private val onRealtimeSdp: (JSONObject) -> Unit = {},
     private val onRealtimeTranscriptDelta: (JSONObject) -> Unit = {},
     private val onRealtimeItemAdded: (JSONObject) -> Unit = {},
@@ -40,7 +40,7 @@ class PhoneWebSocketClient(
         manuallyClosed = false
         val request = Request.Builder().url(config.hostUrl).build()
         socket = client.newWebSocket(request, this)
-        onStatus("Connecting to ${config.hostUrl}")
+        onStatus("Connecting to ${config.hostUrl}", "info")
     }
 
     fun close() {
@@ -123,7 +123,7 @@ class PhoneWebSocketClient(
                 JSONArray(listOf("accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice"))
             )
         webSocket.send(register.toString())
-        onStatus("Connected and registered as ${config.deviceId}")
+        onStatus("Connected and registered as ${config.deviceId}", "info")
     }
 
     override fun onMessage(webSocket: WebSocket, text: String) {
@@ -133,7 +133,7 @@ class PhoneWebSocketClient(
         }
         when (message.optString("type")) {
             "command" -> handleCommand(webSocket, message)
-            "agent_status" -> onStatus(message.optString("text"))
+            "agent_status" -> onStatus(message.optString("text"), message.optString("status", "info"))
             "realtime.sdp" -> onRealtimeSdp(message)
             "realtime.transcript_delta" -> onRealtimeTranscriptDelta(message)
             "realtime.item_added" -> onRealtimeItemAdded(message)
@@ -146,12 +146,12 @@ class PhoneWebSocketClient(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        onStatus("WebSocket error: ${t.message}")
+        onStatus("WebSocket error: ${t.message}", "error")
         scheduleReconnect()
     }
 
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-        onStatus("Disconnected: $reason")
+        onStatus("Disconnected: $reason", "error")
         scheduleReconnect()
     }
 

@@ -3,6 +3,7 @@ package dev.androidagent
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.Manifest
 import android.app.ForegroundServiceStartNotAllowedException
@@ -32,17 +33,19 @@ class AgentForegroundService : Service() {
     private var webSocketClient: PhoneWebSocketClient? = null
     private var voiceRuntimeController: VoiceRuntimeController? = null
     private var voiceTranscriptionManager: VoiceTranscriptionManager? = null
+    private var lastNotificationText = DEFAULT_NOTIFICATION_TEXT
+    private var isAgentTurnActive = false
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         createChannel()
-        ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = false))
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), foregroundServiceType(includeMicrophone = false))
         voiceTranscriptionManager = VoiceTranscriptionManager(onStateChanged = ::handleTranscriptionState)
         overlayController = OverlayController(
             context = this,
             onSubmit = { text -> webSocketClient?.sendUserRequest(text, AgentConfigStore.load(this)) },
-            onStop = { webSocketClient?.sendStopRequest("Stopped from Android overlay") },
+            onStop = { requestStopTurn("Stopped from Android overlay") },
             onDismiss = { stopSelf() },
             onStartVoice = {
                 promoteVoiceForegroundIfAllowed()
@@ -50,7 +53,7 @@ class AgentForegroundService : Service() {
             },
             onToggleVoiceMute = { voiceRuntimeController?.toggleMute() },
             onStopVoice = { voiceRuntimeController?.stopFromUi() },
-            onCancelVoiceTask = { webSocketClient?.sendStopRequest("Cancelled from Android voice UI") },
+            onCancelVoiceTask = { requestStopTurn("Cancelled from Android voice UI") },
             onStartTranscription = { startComposerTranscription() },
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() }
@@ -68,6 +71,10 @@ class AgentForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         connectWebSocket()
+        if (intent?.action == ACTION_STOP_TURN) {
+            requestStopTurn("Stopped from Android notification")
+            return START_STICKY
+        }
         overlayController?.show()
         return START_STICKY
     }
@@ -94,7 +101,7 @@ class AgentForegroundService : Service() {
         webSocketClient = PhoneWebSocketClient(
             config = config,
             commandExecutor = executor,
-            onStatus = { overlayController?.setStatus(it) },
+            onStatus = ::handleBridgeStatus,
             onRealtimeSdp = { voiceRuntimeController?.onRealtimeSdp(it) },
             onRealtimeTranscriptDelta = { voiceRuntimeController?.onRealtimeTranscriptDelta(it) },
             onRealtimeItemAdded = { voiceRuntimeController?.onRealtimeItemAdded(it) },
@@ -150,6 +157,28 @@ class AgentForegroundService : Service() {
         overlayController?.setTranscriptionState(state)
     }
 
+    private fun handleBridgeStatus(text: String, status: String) {
+        serviceScope.launch {
+            overlayController?.setStatus(text)
+            lastNotificationText = text.ifBlank { DEFAULT_NOTIFICATION_TEXT }
+            isAgentTurnActive = when (status) {
+                "working", "tool" -> true
+                "done", "error" -> false
+                else -> isAgentTurnActive
+            }
+            updateNotification()
+        }
+    }
+
+    private fun requestStopTurn(reason: String) {
+        connectWebSocket()
+        overlayController?.setStatus("Stop requested")
+        lastNotificationText = "Stopping active turn..."
+        isAgentTurnActive = true
+        updateNotification()
+        webSocketClient?.sendStopRequest(reason)
+    }
+
     private fun foregroundServiceType(includeMicrophone: Boolean): Int {
         return when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
@@ -174,7 +203,7 @@ class AgentForegroundService : Service() {
             return
         }
         runCatching {
-            ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = true))
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), foregroundServiceType(includeMicrophone = true))
         }.onFailure { error ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && error is ForegroundServiceStartNotAllowedException) {
                 Log.w(TAG, "Voice foreground-service promotion was not allowed; continuing with existing foreground service.", error)
@@ -188,7 +217,7 @@ class AgentForegroundService : Service() {
 
     private fun restoreBaseForeground() {
         runCatching {
-            ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = false))
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), foregroundServiceType(includeMicrophone = false))
         }.onFailure { error ->
             if (error is SecurityException || error is IllegalArgumentException) {
                 Log.w(TAG, "Foreground-service restore failed; continuing with existing foreground service.", error)
@@ -213,17 +242,30 @@ class AgentForegroundService : Service() {
         }
     }
 
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+    }
+
     private fun notification(): Notification {
+        val stopIntent = Intent(this, AgentForegroundService::class.java).setAction(ACTION_STOP_TURN)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, flags)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Android Agent active")
-            .setContentText("Floating bubble and phone bridge are running")
+            .setContentTitle(if (isAgentTurnActive) "Android Agent working" else "Android Agent active")
+            .setContentText(lastNotificationText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(lastNotificationText))
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Turn", stopPendingIntent)
             .build()
     }
 
     companion object {
         private const val TAG = "AgentService"
+        private const val ACTION_STOP_TURN = "dev.androidagent.action.STOP_TURN"
+        private const val NOTIFICATION_ID = 1
+        private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and phone bridge are running"
         const val CHANNEL_ID = "android-agent"
         var isRunning: Boolean = false
             private set

@@ -53,6 +53,9 @@ class OverlayController(
     private val trashShowInterpolator = DecelerateInterpolator()
     private val trashHideInterpolator = AccelerateInterpolator()
     private var bubbleView: View? = null
+    private var bubbleParams: WindowManager.LayoutParams? = null
+    private var lastBubbleX: Int? = null
+    private var lastBubbleY: Int? = null
     private var panelView: View? = null
     private var panelScrimView: View? = null
     private var trashTargetView: ImageView? = null
@@ -75,9 +78,11 @@ class OverlayController(
     private var transcriptionMicButton: ImageButton? = null
     private var transcriptionCancelButton: Button? = null
     private var lastTranscriptionState = VoiceTranscriptionState()
+    private var automationSuppressionDepth = 0
+    private var restoreBubbleAfterAutomation = false
 
     fun show() {
-        if (!Settings.canDrawOverlays(context) || bubbleView != null) {
+        if (!Settings.canDrawOverlays(context) || bubbleView != null || automationSuppressionDepth > 0) {
             return
         }
         val bubble = ImageButton(context).apply {
@@ -91,8 +96,8 @@ class OverlayController(
         }
         val params = overlayParams(width = dp(64), height = dp(64), focusable = false).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dp(16)
-            y = dp(160)
+            x = lastBubbleX ?: dp(16)
+            y = lastBubbleY ?: dp(160)
         }
         ensureTrashTarget()
         attachDrag(
@@ -112,14 +117,56 @@ class OverlayController(
         ) { togglePanel() }
         windowManager.addView(bubble, params)
         bubbleView = bubble
+        bubbleParams = params
     }
 
     fun hide() {
+        automationSuppressionDepth = 0
+        restoreBubbleAfterAutomation = false
+        rememberBubblePosition()
         bubbleView?.let { windowManager.removeView(it) }
         removeTrashTarget()
         dismissPanel()
         dismissConfirmation()
         bubbleView = null
+        bubbleParams = null
+    }
+
+    fun suppressAgentChromeForAutomation() {
+        automationSuppressionDepth += 1
+        if (automationSuppressionDepth > 1) {
+            return
+        }
+
+        restoreBubbleAfterAutomation = bubbleView != null
+        rememberBubblePosition()
+        // Automation suppression only clears our chrome; it must not stop turns,
+        // hang up voice, or dismiss the foreground service.
+        dismissPanel(cancelTranscription = false)
+        bubbleView?.let {
+            it.animate().cancel()
+            it.animate().setListener(null)
+            windowManager.removeView(it)
+        }
+        bubbleView = null
+        bubbleParams = null
+        removeTrashTarget()
+    }
+
+    fun restoreAgentChromeAfterAutomation() {
+        if (automationSuppressionDepth == 0) {
+            return
+        }
+        automationSuppressionDepth -= 1
+        if (automationSuppressionDepth > 0) {
+            return
+        }
+
+        val shouldRestoreBubble = restoreBubbleAfterAutomation
+        restoreBubbleAfterAutomation = false
+        if (shouldRestoreBubble) {
+            show()
+        }
     }
 
     fun setStatus(text: String) {
@@ -418,8 +465,8 @@ class OverlayController(
         renderTranscriptionState(lastTranscriptionState)
     }
 
-    private fun dismissPanel() {
-        if (lastTranscriptionState.isRecording) {
+    private fun dismissPanel(cancelTranscription: Boolean = true) {
+        if (cancelTranscription && lastTranscriptionState.isRecording) {
             onCancelTranscription()
         }
         panelView?.let { windowManager.removeView(it) }
@@ -759,6 +806,13 @@ class OverlayController(
     }
 
     private fun trashTargetSize(): Int = dp(64)
+
+    private fun rememberBubblePosition() {
+        bubbleParams?.let {
+            lastBubbleX = it.x
+            lastBubbleY = it.y
+        }
+    }
 
     companion object {
         private const val TRASH_TARGET_SHOW_MS = 140L

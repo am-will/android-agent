@@ -64,6 +64,19 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
 }
 ```
 
+## Agent Control
+
+Android can ask the bridge to stop the active phone-control turn. The same message is used by the bubble stop button, realtime voice cancellation, and the foreground notification **Stop Turn** action.
+
+```json
+{
+  "type": "agent_control",
+  "deviceId": "pixel",
+  "action": "stop",
+  "reason": "Stopped from Android notification"
+}
+```
+
 ## Realtime Voice
 
 Realtime voice mode uses Android WebRTC for live audio and the PC bridge for OpenAI Realtime session creation. Android creates the WebRTC offer, sends it to the PC bridge, and the bridge posts it to OpenAI's `/v1/realtime/calls` endpoint. Android message names use dotted `realtime.*` types.

@@ -120,6 +120,10 @@ async function handleRealtimeStop(message: RealtimeStopMessage, registeredDevice
   await stopRealtimeSession(message.deviceId, message.reason ?? "Stopped by Android");
 }
 
+async function stopAgentWork(deviceId: string, reason: string): Promise<void> {
+  await realtimeTaskManager.cancelDevice(deviceId, reason);
+}
+
 async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
@@ -182,7 +186,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     const body = (await readJson(req)) as { deviceId?: unknown; reason?: unknown };
     const deviceId = typeof body.deviceId === "string" ? body.deviceId : config.defaultDeviceId;
     const reason = typeof body.reason === "string" ? body.reason : "Stopped by user";
-    await dispatcher.stopActiveTurn(deviceId, reason);
+    await stopAgentWork(deviceId, reason);
     json(res, 200, { ok: true });
     return;
   }
@@ -253,7 +257,7 @@ wss.on("connection", (socket) => {
 
       if (message.type === "agent_control") {
         if (message.action === "stop") {
-          realtimeTaskManager.cancelDevice(message.deviceId, message.reason ?? "Stopped from Android").catch((error) => {
+          stopAgentWork(message.deviceId, message.reason ?? "Stopped from Android").catch((error) => {
             hub.sendStatus(message.deviceId, {
               deviceId: message.deviceId,
               status: "error",
