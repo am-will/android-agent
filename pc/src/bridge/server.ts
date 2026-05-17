@@ -126,6 +126,24 @@ async function handleRealtimeStop(message: RealtimeStopMessage, registeredDevice
   await stopRealtimeSession(message.deviceId, message.reason ?? "Stopped by Android");
 }
 
+async function handleRealtimeHangUpToolCall(
+  message: { deviceId: string; arguments: Record<string, unknown> },
+  registeredDeviceId: string
+): Promise<void> {
+  if (message.deviceId !== registeredDeviceId) {
+    sendRealtimeError(registeredDeviceId, `hang_up_realtime deviceId ${message.deviceId} does not match registered device ${registeredDeviceId}`);
+    return;
+  }
+
+  const reason = typeof message.arguments.reason === "string" && message.arguments.reason.trim()
+    ? message.arguments.reason.trim()
+    : "Realtime voice hung up";
+  if (message.arguments.stopPhoneTask === true) {
+    await stopAgentWork(message.deviceId, reason);
+  }
+  await stopRealtimeSession(message.deviceId, reason);
+}
+
 async function stopAgentWork(deviceId: string, reason: string): Promise<void> {
   hub.cancelPendingCommands(deviceId, reason);
   await realtimeTaskManager.cancelDevice(deviceId, reason);
@@ -278,6 +296,12 @@ wss.on("connection", (socket) => {
       if (message.type === "realtime.tool_call") {
         if (message.deviceId !== deviceId) {
           sendRealtimeError(deviceId, `realtime.tool_call deviceId ${message.deviceId} does not match registered device ${deviceId}`);
+          return;
+        }
+        if (message.name === "hang_up_realtime") {
+          handleRealtimeHangUpToolCall(message, deviceId).catch((error) => {
+            sendRealtimeError(message.deviceId, error instanceof Error ? error.message : String(error));
+          });
           return;
         }
         realtimeTaskManager.handleToolCall(message).catch((error) => {

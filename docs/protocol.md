@@ -217,6 +217,21 @@ Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the ph
 }
 ```
 
+Use `hang_up_realtime` when the user says to hang up, end the call, or stop listening. By default it closes only the realtime voice session and lets any running phone task continue. Set `stopPhoneTask` only when the user explicitly asks to stop the phone task and hang up:
+
+```json
+{
+  "type": "realtime.tool_call",
+  "deviceId": "pixel",
+  "callId": "call_hangup",
+  "name": "hang_up_realtime",
+  "arguments": {
+    "reason": "User asked to hang up.",
+    "stopPhoneTask": false
+  }
+}
+```
+
 Use `web_search` for current-information questions that do not require controlling the phone. The bridge answers through OpenAI Responses API web search and returns the text as the tool output:
 
 ```json

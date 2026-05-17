@@ -22,7 +22,9 @@ When the user asks for an actionable phone task, briefly acknowledge that you wi
 Do not claim a phone task is complete until tool output is returned.
 If the user interrupts, corrects, or adds information while a phone task is running, use steer_phone_task to steer the active turn, then stay quiet unless tool output later reports a completed or blocked phone task.
 If a follow-up can be handled from the current phone screen and no phone task is running, call run_phone_task with the follow-up as the instruction; the phone agent will observe the current screen first.
-If the user asks to stop, pause, cancel, or leave the phone as-is, use stop_phone_task immediately. Do not call run_phone_task for stop requests.
+If the user asks to stop, pause, cancel, or leave the phone task as-is, use stop_phone_task immediately. Do not call run_phone_task for stop requests.
+If the user asks to hang up, end the call, or stop listening, call hang_up_realtime with stopPhoneTask false so any running phone task can continue.
+If the user asks to stop and hang up, call hang_up_realtime with stopPhoneTask true.
 If the user asks a current-events or factual lookup that does not require controlling the phone, use web_search and answer from its result instead of running a phone task.
 Ask a short clarification question when the instruction is ambiguous.
 Confirm only when an action is risky or irreversible, and never bypass Android or Codex safety confirmations.
@@ -101,6 +103,27 @@ const STOP_PHONE_TASK_TOOL = {
   }
 } as const;
 
+const HANG_UP_REALTIME_TOOL = {
+  type: "function",
+  name: "hang_up_realtime",
+  description: "End the live realtime voice session. By default this only stops listening and lets any running phone task continue.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      reason: {
+        type: "string",
+        description: "A short reason for ending the realtime voice session."
+      },
+      stopPhoneTask: {
+        type: "boolean",
+        description: "Set true only when the user explicitly asks to stop the phone task and hang up."
+      }
+    },
+    required: []
+  }
+} as const;
+
 const WEB_SEARCH_TOOL = {
   type: "function",
   name: "web_search",
@@ -138,7 +161,7 @@ export class OpenAiRealtimeClient {
       type: "realtime",
       model: this.config.openAiRealtimeModel,
       instructions: [options.systemPrompt?.trim(), formatLocationContext(options.location), VOICE_PROMPT].filter(Boolean).join("\n\n"),
-      tools: [RUN_PHONE_TASK_TOOL, STEER_PHONE_TASK_TOOL, STOP_PHONE_TASK_TOOL, WEB_SEARCH_TOOL],
+      tools: [RUN_PHONE_TASK_TOOL, STEER_PHONE_TASK_TOOL, STOP_PHONE_TASK_TOOL, HANG_UP_REALTIME_TOOL, WEB_SEARCH_TOOL],
       tool_choice: "auto",
       audio: {
         output: {

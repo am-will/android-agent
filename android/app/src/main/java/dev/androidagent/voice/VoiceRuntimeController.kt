@@ -184,6 +184,10 @@ class VoiceRuntimeController(
             if (callId.isBlank() || !toolOutputsSent.add(callId)) {
                 return@launch
             }
+            if (session == null) {
+                updateState(state.copy(latestTaskResult = taskResultSummary(payload)))
+                return@launch
+            }
             val events = buildRealtimeToolOutputEvents(payload)
             val sentOutput = session?.sendJsonEvent(events[0]) == true
             if (sentOutput) {
