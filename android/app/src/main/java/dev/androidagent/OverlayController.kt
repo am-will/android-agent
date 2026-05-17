@@ -355,7 +355,7 @@ class OverlayController(
             contentDescription = "Start realtime voice mode"
             setOnClickListener {
                 onStartVoice()
-                showVoiceSurface()
+                dismissPanel()
             }
         }
         val header = LinearLayout(context).apply {
