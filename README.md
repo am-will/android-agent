@@ -18,10 +18,12 @@ Current prototype note: the copied PC dispatcher still contains a Codex app-serv
 cd pc
 npm install
 export PHONE_AGENT_TOKEN=change-me
+export PHONE_AGENT_DISPATCHER=openclaw
+npm run openclaw:mcp
 npm run bridge
 ```
 
-In another terminal, configure the current session adapter. Today that means the legacy Codex MCP setup in `docs/codex-mcp.md`; the intended replacement is the Open Claw adapter described in `docs/open-claw-migration-plan.md`. Then install the Android app from `android/` with Android Studio or Gradle. On the phone, set:
+Then build and install the Android app from `android/` with Android Studio or Gradle. On the phone, set:
 
 - WebSocket URL: `ws://<your-computer-lan-ip>:8787/phone`
 - Device ID: `pixel`

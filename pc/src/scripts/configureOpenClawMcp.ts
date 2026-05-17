@@ -1,0 +1,46 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const pcRoot = resolve(scriptDir, "../..");
+const repoRoot = resolve(pcRoot, "..");
+const tsxBin = resolve(pcRoot, "node_modules/.bin/tsx");
+const mcpServer = resolve(pcRoot, "src/mcp/androidPhoneServer.ts");
+const bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8787";
+const openClawCommand = process.env.OPENCLAW_AGENT_COMMAND?.trim() || "openclaw";
+
+if (!existsSync(tsxBin)) {
+  throw new Error(`Missing tsx executable at ${tsxBin}. Run npm install in ${pcRoot}.`);
+}
+
+const config = {
+  command: tsxBin,
+  args: [mcpServer],
+  cwd: pcRoot,
+  env: {
+    PHONE_AGENT_BRIDGE_URL: bridgeUrl
+  }
+};
+
+const args = ["mcp", "set", "android-phone", JSON.stringify(config)];
+
+console.log(`Configuring OpenClaw MCP server "android-phone" for ${repoRoot}`);
+console.log(`Bridge URL: ${bridgeUrl}`);
+
+await new Promise<void>((resolvePromise, reject) => {
+  const child = spawn(openClawCommand, args, {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: process.env
+  });
+  child.on("error", (error) => reject(new Error(`Failed to start ${openClawCommand}: ${error.message}`)));
+  child.on("close", (code, signal) => {
+    if (code === 0) {
+      resolvePromise();
+      return;
+    }
+    reject(new Error(`${openClawCommand} ${args.join(" ")} exited with code ${code ?? "null"} signal ${signal ?? "null"}`));
+  });
+});

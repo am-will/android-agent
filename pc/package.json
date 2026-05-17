@@ -1,5 +1,5 @@
 {
-  "name": "android-codex-phone-agent-pc",
+  "name": "open-claw-agent-pc",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "bridge": "tsx src/bridge/server.ts",
     "mcp": "tsx src/mcp/androidPhoneServer.ts",
+    "openclaw:mcp": "tsx src/scripts/configureOpenClawMcp.ts",
     "phone:usb": "adb reverse tcp:8787 tcp:8787 && adb shell am start -n dev.androidagent/.MainActivity --ez startAgent true",
     "phone:health": "curl -sS http://127.0.0.1:8787/health",
     "demo:open-settings": "tsx src/scripts/sendCommand.ts open_app '{\"appName\":\"Settings\"}'",

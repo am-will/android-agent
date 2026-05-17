@@ -5,18 +5,20 @@
 Requirements:
 
 - Node.js 24+
-- An installed Open Claw session on the remote PC for the target dispatcher path
-- Codex CLI with `codex app-server` only if exercising the copied legacy dispatcher before the Open Claw adapter lands
+- OpenClaw CLI 2026.5.7+ installed and configured on the PC that should do the delegated work
+- Codex CLI with `codex app-server` only if exercising the copied legacy dispatcher
 - Same network reachability from phone to PC
 - Gradle or Android Studio for Android builds
 
-Install and start the bridge:
+Install, register the optional phone-control MCP server with OpenClaw, and start the bridge:
 
 ```bash
 cd pc
 npm install
 export PHONE_AGENT_TOKEN=change-me
 export PHONE_AGENT_DEFAULT_DEVICE=pixel
+export PHONE_AGENT_DISPATCHER=openclaw
+npm run openclaw:mcp
 npm run bridge
 ```
 
@@ -24,9 +26,9 @@ The bridge exposes:
 
 - `ws://0.0.0.0:8787/phone` for Android
 - `http://127.0.0.1:8787/health` for local status
-- `POST http://127.0.0.1:8787/api/phone/default/command` for local phone-tool adapters
+- `POST http://127.0.0.1:8787/api/phone/default/command` for the optional `android-phone` tool adapter
 
-The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime intents should route to Open Claw. Phone-control tool calls are only one possible capability of that Open Claw session. The current queue still targets the legacy Codex dispatcher until the Open Claw adapter replaces it.
+The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime intents route to OpenClaw by default. Phone-control tool calls are only one possible capability of that OpenClaw session.
 
 ## Android
 

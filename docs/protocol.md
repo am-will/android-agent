@@ -171,6 +171,23 @@ Raw non-audio realtime items are forwarded for Android-side normalization or deb
 
 Realtime voice sessions expose high-level OpenAI function tools. Android parses function-call events from the WebRTC data channel and relays the completed call to the PC bridge.
 
+Use `delegate_openclaw_task` for general work that should happen in OpenClaw on the remote PC:
+
+```json
+{
+  "type": "realtime.tool_call",
+  "deviceId": "pixel",
+  "callId": "call_general",
+  "name": "delegate_openclaw_task",
+  "arguments": {
+    "instruction": "Summarize my current project status",
+    "urgency": "normal"
+  }
+}
+```
+
+The bridge validates that `name` is `delegate_openclaw_task`, rejects empty or oversized instructions, and routes the task to the active desktop-agent dispatcher as a general OpenClaw task.
+
 Use `run_phone_task` for new actionable phone tasks:
 
 ```json
@@ -187,7 +204,7 @@ Use `run_phone_task` for new actionable phone tasks:
 }
 ```
 
-The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and runs the instruction through the active phone-task dispatcher. Only one task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active task before starting the new task. Today the dispatcher is the copied Codex app-server client; the target dispatcher is an Open Claw session adapter.
+The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and routes the task to OpenClaw with explicit phone-control context. Only one realtime task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active task before starting the new task.
 
 Use `steer_phone_task` when the user corrects or adds information while a phone task is running. The bridge injects the guidance into the active task using the current dispatcher adapter:
 
@@ -203,6 +220,8 @@ Use `steer_phone_task` when the user corrects or adds information while a phone 
 }
 ```
 
+Use `steer_openclaw_task` the same way for a general OpenClaw task.
+
 Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the phone as-is. The bridge cancels queued realtime tasks, rejects pending phone commands, and interrupts the active dispatcher task:
 
 ```json
@@ -216,6 +235,8 @@ Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the ph
   }
 }
 ```
+
+Use `stop_openclaw_task` the same way for a general OpenClaw task.
 
 Use `hang_up_realtime` when the user says to hang up, end the call, or stop listening. By default it closes only the realtime voice session and lets any running phone task continue. Set `stopPhoneTask` only when the user explicitly asks to stop the phone task and hang up:
 
