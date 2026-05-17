@@ -665,8 +665,6 @@ class OverlayController(
             playSequentially(
                 scaleAnimator(view, 1.12f, TRASH_TARGET_PULSE_MS),
                 scaleAnimator(view, 0.96f, TRASH_TARGET_PULSE_MS),
-                scaleAnimator(view, 1.12f, TRASH_TARGET_PULSE_MS),
-                scaleAnimator(view, 0.96f, TRASH_TARGET_PULSE_MS),
                 shrinkAnimator(view)
             )
         }
