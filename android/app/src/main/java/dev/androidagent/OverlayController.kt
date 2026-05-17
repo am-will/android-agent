@@ -22,12 +22,17 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import dev.androidagent.voice.VoiceRuntimeState
+import dev.androidagent.voice.VoiceRuntimeStatus
 import kotlinx.coroutines.CompletableDeferred
 
 class OverlayController(
     private val context: Context,
     private val onSubmit: (String) -> Unit,
-    private val onStop: () -> Unit
+    private val onStop: () -> Unit,
+    private val onStartVoice: () -> Unit,
+    private val onToggleVoiceMute: () -> Unit,
+    private val onStopVoice: () -> Unit
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -37,6 +42,12 @@ class OverlayController(
     private var confirmationView: View? = null
     private var confirmationScrimView: View? = null
     private var statusText: TextView? = null
+    private var voiceSurface: LinearLayout? = null
+    private var voiceStatusText: TextView? = null
+    private var voiceTranscriptText: TextView? = null
+    private var voiceMuteButton: Button? = null
+    private var voiceHangupButton: Button? = null
+    private var lastVoiceState = VoiceRuntimeState()
 
     fun show() {
         if (!Settings.canDrawOverlays(context) || bubbleView != null) {
@@ -70,6 +81,11 @@ class OverlayController(
 
     fun setStatus(text: String) {
         statusText?.text = text
+    }
+
+    fun setVoiceState(state: VoiceRuntimeState) {
+        lastVoiceState = state
+        mainHandler.post { renderVoiceState(state) }
     }
 
     fun askConfirmation(message: String, preview: String?): CompletableDeferred<Boolean> {
@@ -224,19 +240,33 @@ class OverlayController(
                 openSettings()
             }
         }
+        val micButton = Button(context).apply {
+            text = "Mic"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(accent, dp(14))
+            contentDescription = "Start voice mode"
+            setOnClickListener {
+                onStartVoice()
+                showVoiceSurface()
+            }
+        }
         val header = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, dp(10))
             addView(title, LinearLayout.LayoutParams(0, dp(40), 1f))
+            addView(micButton, LinearLayout.LayoutParams(dp(56), dp(36)).apply { rightMargin = dp(8) })
             addView(settingsButton, LinearLayout.LayoutParams(dp(36), dp(36)))
         }
+        val voice = buildVoiceSurface(surface, primaryText, secondaryText, accent)
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(14))
             background = roundedDrawable(surface, dp(24), 0x1F888888)
             elevation = dp(12).toFloat()
             addView(header)
+            addView(voice)
             addView(input, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -277,6 +307,7 @@ class OverlayController(
         windowManager.addView(panel, params)
         panel.post { keepInsideScreen(panel, params) }
         panelView = panel
+        renderVoiceState(lastVoiceState)
     }
 
     private fun dismissPanel() {
@@ -284,6 +315,72 @@ class OverlayController(
         panelScrimView?.let { windowManager.removeView(it) }
         panelView = null
         panelScrimView = null
+        voiceSurface = null
+        voiceStatusText = null
+        voiceTranscriptText = null
+        voiceMuteButton = null
+        voiceHangupButton = null
+    }
+
+    private fun buildVoiceSurface(surface: Int, primaryText: Int, secondaryText: Int, accent: Int): LinearLayout {
+        voiceStatusText = TextView(context).apply {
+            textSize = 14f
+            setTextColor(primaryText)
+        }
+        voiceTranscriptText = TextView(context).apply {
+            textSize = 13f
+            setTextColor(secondaryText)
+            setPadding(0, dp(8), 0, dp(10))
+        }
+        voiceMuteButton = Button(context).apply {
+            text = "Mute"
+            setTextColor(primaryText)
+            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            setOnClickListener { onToggleVoiceMute() }
+        }
+        voiceHangupButton = Button(context).apply {
+            text = "Hang up"
+            setTextColor(Color.WHITE)
+            background = roundedDrawable(accent, dp(18))
+            setOnClickListener { onStopVoice() }
+        }
+        val voiceActions = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            addView(voiceMuteButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(10) })
+            addView(voiceHangupButton, LinearLayout.LayoutParams(0, dp(40), 1f))
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = roundedDrawable(surface, dp(20), 0x22888888)
+            addView(voiceStatusText)
+            addView(voiceTranscriptText)
+            addView(voiceActions)
+            voiceSurface = this
+        }
+    }
+
+    private fun showVoiceSurface() {
+        if (panelView == null) {
+            togglePanel()
+        }
+        voiceSurface?.visibility = View.VISIBLE
+    }
+
+    private fun renderVoiceState(state: VoiceRuntimeState) {
+        val shouldShow = state.isActive || state.status == VoiceRuntimeStatus.ERROR || state.transcript.isNotBlank()
+        voiceSurface?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+        voiceStatusText?.text = buildString {
+            append("Voice: ")
+            append(state.status.label)
+            state.error?.takeIf { it.isNotBlank() }?.let { append(" - ").append(it) }
+        }
+        voiceTranscriptText?.text = state.transcript.ifBlank { "Voice transcript will appear here." }
+        voiceMuteButton?.text = if (state.isMuted) "Unmute" else "Mute"
+        voiceMuteButton?.isEnabled = state.isActive
+        voiceHangupButton?.isEnabled = state.isActive || state.status == VoiceRuntimeStatus.ERROR
     }
 
     private fun dismissConfirmation() {

@@ -26,4 +26,8 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.12.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("io.github.webrtc-sdk:android:144.7559.05")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }

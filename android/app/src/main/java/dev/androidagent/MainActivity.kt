@@ -4,6 +4,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -38,12 +39,14 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 10)
         }
         buildUi()
+        maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
     }
 
@@ -151,6 +154,11 @@ class MainActivity : ComponentActivity() {
         })
 
         root.addView(Button(this).apply {
+            text = "Grant Microphone Permission"
+            setOnClickListener { requestMicPermission() }
+        })
+
+        root.addView(Button(this).apply {
             text = "Open Accessibility Settings"
             setOnClickListener {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -210,12 +218,30 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshStatus() {
         val overlay = Settings.canDrawOverlays(this)
+        val microphone = hasMicPermission()
         val accessibility = isAccessibilityEnabled()
         statusText.text = """
             Overlay permission: ${if (overlay) "granted" else "missing"}
+            Microphone permission: ${if (microphone) "granted" else "missing"}
             Accessibility service: ${if (accessibility) "enabled" else "disabled"}
             Foreground service: ${if (AgentForegroundService.isRunning) "running" else "stopped"}
         """.trimIndent()
+    }
+
+    private fun maybeRequestMicPermission(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_REQUEST_MIC_PERMISSION, false) == true) {
+            requestMicPermission()
+        }
+    }
+
+    private fun requestMicPermission() {
+        if (!hasMicPermission()) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MIC_PERMISSION)
+        }
+    }
+
+    private fun hasMicPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun maybeStartAgentFromIntent(intent: Intent?) {
@@ -247,5 +273,10 @@ class MainActivity : ComponentActivity() {
             }
 
         return enabledBySecureSetting || enabledByManager
+    }
+
+    companion object {
+        const val EXTRA_REQUEST_MIC_PERMISSION = "requestMicPermission"
+        private const val REQUEST_MIC_PERMISSION = 20
     }
 }

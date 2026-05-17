@@ -16,7 +16,13 @@ import java.util.concurrent.TimeUnit
 class PhoneWebSocketClient(
     private val config: AgentConfig,
     private val commandExecutor: AccessibilityCommandExecutor,
-    private val onStatus: (String) -> Unit
+    private val onStatus: (String) -> Unit,
+    private val onRealtimeSdp: (JSONObject) -> Unit = {},
+    private val onRealtimeTranscriptDelta: (JSONObject) -> Unit = {},
+    private val onRealtimeItemAdded: (JSONObject) -> Unit = {},
+    private val onRealtimeSpeechStarted: (JSONObject) -> Unit = {},
+    private val onRealtimeError: (JSONObject) -> Unit = {},
+    private val onRealtimeClosed: (JSONObject) -> Unit = {}
 ) : WebSocketListener() {
     private val client = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
@@ -62,6 +68,25 @@ class PhoneWebSocketClient(
         socket?.send(message.toString())
     }
 
+    fun sendRealtimeStart(sdp: String, requestConfig: AgentConfig = config) {
+        val message = JSONObject()
+            .put("type", "realtime.start")
+            .put("deviceId", requestConfig.deviceId)
+            .put("sdp", sdp)
+            .put("systemPrompt", requestConfig.systemPrompt)
+            .put("model", requestConfig.model)
+            .put("reasoningEffort", requestConfig.reasoningEffort)
+        socket?.send(message.toString())
+    }
+
+    fun sendRealtimeStop(reason: String) {
+        val message = JSONObject()
+            .put("type", "realtime.stop")
+            .put("deviceId", config.deviceId)
+            .put("reason", reason)
+        socket?.send(message.toString())
+    }
+
     override fun onOpen(webSocket: WebSocket, response: Response) {
         reconnectAttempts = 0
         val register = JSONObject()
@@ -70,7 +95,7 @@ class PhoneWebSocketClient(
             .put("token", config.token)
             .put(
                 "capabilities",
-                JSONArray(listOf("accessibility_tree", "gestures", "text_input", "screenshots", "app_launch"))
+                JSONArray(listOf("accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice"))
             )
         webSocket.send(register.toString())
         onStatus("Connected and registered as ${config.deviceId}")
@@ -81,6 +106,12 @@ class PhoneWebSocketClient(
         when (message.optString("type")) {
             "command" -> handleCommand(webSocket, message)
             "agent_status" -> onStatus(message.optString("text"))
+            "realtime.sdp" -> onRealtimeSdp(message)
+            "realtime.transcript_delta" -> onRealtimeTranscriptDelta(message)
+            "realtime.item_added" -> onRealtimeItemAdded(message)
+            "realtime.speech_started" -> onRealtimeSpeechStarted(message)
+            "realtime.error" -> onRealtimeError(message)
+            "realtime.closed" -> onRealtimeClosed(message)
         }
     }
 
