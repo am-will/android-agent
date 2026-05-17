@@ -4,11 +4,11 @@
 - This repo is **Open Claw Agent**: an Android bubble endpoint for delegating chat and voice tasks directly to an installed Open Claw session on the user's remote PC. Phone control is a secondary tool capability, not the default purpose of the product.
 - `pc/` is the TypeScript PC bridge, HTTP API, dispatcher layer, and `android-phone` MCP server. It uses Node.js 24+, ESM, strict TypeScript, `zod`, `ws`, and the official MCP SDK.
 - `pc/src/bridge/` owns phone registration, command dispatch, audit/status APIs, Realtime session creation, Realtime task queueing, and OpenAI web search for voice-mode lookups.
-- `pc/src/dispatcher/` owns the agent-session adapter boundary. Today it still contains the copied Codex app-server client and isolated fallback adapter; the target adapter is Open Claw on the remote PC. `PHONE_AGENT_USE_FALLBACK=1` deliberately exercises the fallback path.
+- `pc/src/dispatcher/` owns the agent-session adapter boundary. `OpenClawSessionClient` is the default adapter and delegates to `openclaw agent --json`; the copied Codex app-server client remains legacy-selectable with `PHONE_AGENT_DISPATCHER=codex`. `PHONE_AGENT_USE_FALLBACK=1` deliberately exercises the fallback path.
 - `pc/src/protocol/messages.ts` is the source of truth for bridge message validation and shared message types.
 - `android/` is the Kotlin Android app. It connects to the PC bridge over WebSocket, runs the overlay/foreground service, executes phone commands through `AccessibilityService`, supports realtime voice over WebRTC, and supports composer transcription through OpenAI audio transcription.
 - `android/app/src/main/java/dev/androidagent/voice/` owns realtime voice state, WebRTC transport, function-call accumulation, transcript normalization, and transcription helpers.
-- `docs/` contains setup, protocol, pairing, safety, legacy Codex dispatcher notes, Open Claw migration notes, limitations, and demo notes. Check these before changing cross-device behavior.
+- `docs/` contains setup, protocol, pairing, safety, legacy Codex dispatcher notes, OpenClaw implementation notes, limitations, and demo notes. Check these before changing cross-device behavior.
 
 ## Commands
 - PC install: `cd pc && npm install`
@@ -17,6 +17,7 @@
 - PC tests: `cd pc && npm test`
 - PC bridge: `cd pc && PHONE_AGENT_TOKEN=change-me npm run bridge`
 - PC MCP server: `cd pc && npm run mcp`
+- Register phone MCP with OpenClaw: `cd pc && npm run openclaw:mcp`
 - PC bridge health: `cd pc && npm run phone:health`
 - USB test setup: `cd pc && npm run phone:usb`
 - Demo text request: `cd pc && npm run demo:agent -- "Open Settings"`

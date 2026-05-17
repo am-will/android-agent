@@ -1,4 +1,4 @@
-# Open Claw Dispatcher Migration Plan
+# Open Claw Dispatcher Migration Plan And Status
 
 **Generated**: 2026-05-17  
 **Estimated Complexity**: Medium to High
@@ -10,6 +10,14 @@ Open Claw Agent should primarily be a phone-native endpoint into the user's inst
 Phone control remains valuable, but it is a secondary capability. Most delegated work should happen on the remote PC where Open Claw is installed. The phone should act as an input surface, notification/status surface, and optional tool target only when the task actually requires interacting with the Android device.
 
 The best path is to keep the Android bridge, Android overlay, and OpenAI Realtime voice flow, then replace the copied Codex app-server dispatcher with an `OpenClawSessionClient` that can deliver general Open Claw tasks and expose phone-control tools as optional capabilities.
+
+## Implementation Status
+
+- Default dispatcher selection now uses `PHONE_AGENT_DISPATCHER=openclaw` and `OpenClawSessionClient`.
+- `OpenClawSessionClient` delegates bubble requests to `openclaw agent --json` with a stable `OPENCLAW_AGENT_SESSION_ID`.
+- Realtime voice exposes `delegate_openclaw_task` for general remote-PC work and keeps `run_phone_task` for explicit Android phone work.
+- `npm run openclaw:mcp` registers the existing `android-phone` MCP server with OpenClaw, so phone tools are optional capabilities of the OpenClaw session.
+- The copied Codex app-server adapter remains available only as `PHONE_AGENT_DISPATCHER=codex` legacy compatibility.
 
 ## Product Principles
 
@@ -29,13 +37,11 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 7. When Open Claw calls a phone tool, the local tool layer forwards commands through the bridge to Android and returns observations/results.
 8. The Codex app-server client remains temporarily as a compatibility adapter until Open Claw parity is verified.
 
-## Open Questions
+## Remaining Follow-Ups
 
-- What stable control surface does the installed Open Claw session expose: MCP client config, local HTTP API, websocket, CLI command, or a session/socket protocol?
-- Can Open Claw accept general chat/task delegation separately from phone-control tasks?
-- Can Open Claw stream intermediate status and final results back to the phone bubble?
-- Can Open Claw accept mid-task steering and interruption, or do we need to emulate those with cancellation plus a new task?
-- Does Open Claw already support MCP tools, or should `android-phone` be exposed through a native Open Claw tool registry?
+- A direct Gateway/WebSocket adapter could replace the CLI adapter later for richer streaming and native mid-task steering.
+- Mid-task steering currently depends on the adapter surface; with the CLI path, stop plus follow-up is the reliable fallback.
+- General OpenClaw tasks currently serialize through the bridge's single active adapter process; future work can use OpenClaw's own concurrency model if needed.
 - How should the bridge select a remote PC/session when multiple Open Claw sessions are available?
 - What auth boundary is required between this bridge and the remote PC session beyond the local prototype token?
 
@@ -64,7 +70,7 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 ### Task 1.2: Add Dispatcher Selection Config
 
 - **Location**: `pc/src/dispatcher/dispatcher.ts`, `pc/src/bridge/server.ts`
-- **Description**: Introduce `PHONE_AGENT_DISPATCHER=codex|openclaw|fallback`, defaulting to the safest currently working path until Open Claw is implemented.
+- **Description**: Introduce `PHONE_AGENT_DISPATCHER=codex|openclaw|fallback`, defaulting to OpenClaw.
 - **Dependencies**: Task 1.1
 - **Acceptance Criteria**:
   - Unknown dispatcher values fail fast with a clear bridge startup error.
@@ -182,7 +188,7 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 ### Task 4.1: Update Defaults
 
 - **Location**: `pc/src/dispatcher/dispatcher.ts`, `pc/package.json`, `README.md`, `docs/setup.md`
-- **Description**: Default to `PHONE_AGENT_DISPATCHER=openclaw` once parity is proven.
+- **Description**: Default to `PHONE_AGENT_DISPATCHER=openclaw`.
 - **Dependencies**: Sprint 3
 - **Acceptance Criteria**:
   - Quick Start works with Open Claw for a general remote-PC task.
