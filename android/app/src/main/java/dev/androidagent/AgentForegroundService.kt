@@ -18,17 +18,27 @@ import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
+import dev.androidagent.voice.transcription.VoiceTranscriptionManager
+import dev.androidagent.voice.transcription.VoiceTranscriptionState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class AgentForegroundService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var overlayController: OverlayController? = null
     private var webSocketClient: PhoneWebSocketClient? = null
     private var voiceRuntimeController: VoiceRuntimeController? = null
+    private var voiceTranscriptionManager: VoiceTranscriptionManager? = null
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         createChannel()
         ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = false))
+        voiceTranscriptionManager = VoiceTranscriptionManager(onStateChanged = ::handleTranscriptionState)
         overlayController = OverlayController(
             context = this,
             onSubmit = { text -> webSocketClient?.sendUserRequest(text, AgentConfigStore.load(this)) },
@@ -60,6 +70,8 @@ class AgentForegroundService : Service() {
     override fun onDestroy() {
         voiceRuntimeController?.stopFromUi()
         voiceRuntimeController?.close()
+        voiceTranscriptionManager?.close()
+        serviceScope.cancel()
         webSocketClient?.close()
         overlayController?.hide()
         isRunning = false
@@ -85,6 +97,56 @@ class AgentForegroundService : Service() {
             onRealtimeError = { voiceRuntimeController?.onRealtimeError(it) },
             onRealtimeClosed = { voiceRuntimeController?.onRealtimeClosed(it) }
         ).also { it.connect() }
+    }
+
+    private fun startComposerTranscription() {
+        val manager = voiceTranscriptionManager ?: return
+        if (!hasMicPermission()) {
+            overlayController?.setStatus("Microphone permission is required for transcription.")
+            openMicPermissionScreen()
+            return
+        }
+
+        promoteVoiceForegroundIfAllowed()
+        val started = manager.startRecording(this) {
+            stopComposerTranscription()
+        }
+        if (!started) {
+            overlayController?.setStatus(manager.currentState().error ?: "Could not start transcription recording.")
+            restoreBaseForeground()
+        }
+    }
+
+    private fun stopComposerTranscription(onTranscript: (String) -> Unit = {}) {
+        val manager = voiceTranscriptionManager ?: return
+        val state = manager.currentState()
+        if (!state.isRecording || state.isTranscribing) {
+            return
+        }
+
+        serviceScope.launch {
+            val transcript = manager.stopAndTranscribe(AgentConfigStore.load(this@AgentForegroundService).openAiApiKey)
+            restoreBaseForeground()
+            if (transcript != null) {
+                onTranscript(transcript)
+            }
+        }
+    }
+
+    private fun cancelComposerTranscription() {
+        voiceTranscriptionManager?.cancelRecording()
+        restoreBaseForeground()
+        overlayController?.setStatus("Transcription recording canceled.")
+    }
+
+    private fun handleTranscriptionState(state: VoiceTranscriptionState) {
+        val status = when {
+            state.error != null -> "Transcription error: ${state.error}"
+            state.isTranscribing -> "Transcribing audio..."
+            state.isRecording -> "Recording for transcription..."
+            else -> null
+        }
+        status?.let { overlayController?.setStatus(it) }
     }
 
     private fun foregroundServiceType(includeMicrophone: Boolean): Int {
@@ -121,6 +183,26 @@ class AgentForegroundService : Service() {
                 throw error
             }
         }
+    }
+
+    private fun restoreBaseForeground() {
+        runCatching {
+            ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = false))
+        }.onFailure { error ->
+            if (error is SecurityException || error is IllegalArgumentException) {
+                Log.w(TAG, "Foreground-service restore failed; continuing with existing foreground service.", error)
+            } else {
+                throw error
+            }
+        }
+    }
+
+    private fun openMicPermissionScreen() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_REQUEST_MIC_PERMISSION, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
     }
 
     private fun createChannel() {
