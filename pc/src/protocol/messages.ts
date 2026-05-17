@@ -61,6 +61,14 @@ export const userRequestMessageSchema = z.object({
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
 });
 
+export const phoneLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracyMeters: z.number().nonnegative().optional(),
+  provider: z.string().optional(),
+  capturedAtMs: z.number().int().positive().optional()
+});
+
 export const realtimeStartMessageSchema = z.object({
   type: z.literal("realtime.start"),
   deviceId: z.string().min(1),
@@ -68,7 +76,8 @@ export const realtimeStartMessageSchema = z.object({
   systemPrompt: z.string().optional(),
   model: z.enum(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]).optional(),
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
-  openAiApiKey: z.string().optional()
+  openAiApiKey: z.string().optional(),
+  location: phoneLocationSchema.optional()
 });
 
 export const realtimeStopMessageSchema = z.object({
@@ -114,6 +123,7 @@ export type RegisterMessage = z.infer<typeof registerMessageSchema>;
 export type CommandMessage = z.infer<typeof commandMessageSchema>;
 export type ResultMessage = z.infer<typeof resultMessageSchema>;
 export type UserRequestMessage = z.infer<typeof userRequestMessageSchema>;
+export type PhoneLocation = z.infer<typeof phoneLocationSchema>;
 export type RealtimeStartMessage = z.infer<typeof realtimeStartMessageSchema>;
 export type RealtimeStopMessage = z.infer<typeof realtimeStopMessageSchema>;
 export type RealtimeToolCallMessage = z.infer<typeof realtimeToolCallMessageSchema>;

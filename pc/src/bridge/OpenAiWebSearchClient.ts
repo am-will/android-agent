@@ -1,9 +1,12 @@
 import type { BridgeConfig } from "./config.js";
+import type { PhoneLocation } from "../protocol/messages.js";
+import { formatLocationContext } from "./OpenAiRealtimeClient.js";
 
 export interface OpenAiWebSearchOptions {
   query: string;
   deviceId: string;
   apiKey?: string;
+  location?: PhoneLocation;
 }
 
 interface ResponsesApiTextContent {
@@ -34,6 +37,7 @@ export class OpenAiWebSearchClient {
       throw new Error("OpenAI API key is required for realtime web search. Set it in the Android app settings or OPENAI_API_KEY on the PC bridge.");
     }
 
+    const locationContext = formatLocationContext(options.location);
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -49,7 +53,10 @@ export class OpenAiWebSearchClient {
         input: [
           {
             role: "system",
-            content: "Answer the user's web lookup concisely. Include source URLs when available."
+            content: [
+              "Answer the user's web lookup concisely. Include source URLs when available.",
+              locationContext
+            ].filter(Boolean).join("\n")
           },
           {
             role: "user",

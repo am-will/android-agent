@@ -27,7 +27,8 @@ const realtimeTaskManager = new RealtimeTaskManager({
   audit,
   sendRealtime,
   webSearch: webSearchClient,
-  getRealtimeApiKey: (deviceId) => realtimeSessions.get(deviceId)?.apiKey
+  getRealtimeApiKey: (deviceId) => realtimeSessions.get(deviceId)?.apiKey,
+  getRealtimeLocation: (deviceId) => realtimeSessions.get(deviceId)?.location
 });
 
 const realtimeSessions = new Map<string, OpenAiRealtimeSession>();
@@ -89,7 +90,8 @@ async function startRealtimeSession(message: RealtimeStartMessage, registeredDev
       deviceId: message.deviceId,
       sdp: message.sdp,
       systemPrompt: message.systemPrompt,
-      apiKey: message.openAiApiKey
+      apiKey: message.openAiApiKey,
+      location: message.location
     });
     realtimeSessions.set(message.deviceId, session);
     audit.record("openai_realtime_started", message.deviceId, {

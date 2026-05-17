@@ -1,14 +1,15 @@
 import type { Dispatcher } from "../dispatcher/dispatcher.js";
-import type { RealtimeOutboundMessage, RealtimeToolCallMessage, RealtimeToolResultMessage } from "../protocol/messages.js";
+import type { PhoneLocation, RealtimeOutboundMessage, RealtimeToolCallMessage, RealtimeToolResultMessage } from "../protocol/messages.js";
 import type { AuditLog } from "./AuditLog.js";
 
 interface RealtimeTaskManagerOptions {
   dispatcher: Pick<Dispatcher, "handleUserRequest" | "stopActiveTurn" | "steerActiveTurn">;
   sendRealtime: (deviceId: string, message: RealtimeOutboundMessage) => void;
   webSearch?: {
-    search(options: { deviceId: string; query: string; apiKey?: string }): Promise<string>;
+    search(options: { deviceId: string; query: string; apiKey?: string; location?: PhoneLocation }): Promise<string>;
   };
   getRealtimeApiKey?: (deviceId: string) => string | undefined;
+  getRealtimeLocation?: (deviceId: string) => PhoneLocation | undefined;
   audit?: AuditLog;
   maxQueueSize?: number;
   taskTimeoutMs?: number;
@@ -219,7 +220,8 @@ export class RealtimeTaskManager {
       const output = await this.options.webSearch.search({
         deviceId: message.deviceId,
         query,
-        apiKey: this.options.getRealtimeApiKey?.(message.deviceId)
+        apiKey: this.options.getRealtimeApiKey?.(message.deviceId),
+        location: this.options.getRealtimeLocation?.(message.deviceId)
       });
       this.sendResult(message.deviceId, {
         callId: message.callId,

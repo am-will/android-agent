@@ -109,11 +109,18 @@ Android sends:
   "type": "realtime.start",
   "deviceId": "pixel",
   "sdp": "v=0\r\n...",
+  "location": {
+    "latitude": 31.7619,
+    "longitude": -106.485,
+    "accuracyMeters": 100,
+    "provider": "network",
+    "capturedAtMs": 1779050000000
+  },
   "openAiApiKey": "sk-..."
 }
 ```
 
-Optional fields: `systemPrompt`, `model`, `reasoningEffort`, and `openAiApiKey`.
+Optional fields: `systemPrompt`, `model`, `reasoningEffort`, `location`, and `openAiApiKey`. Android sends `location` only when the user has granted location permission and the device has a recent best-effort location available. The bridge uses it as context for localized realtime answers and web searches.
 
 The bridge replies with the remote SDP answer:
 

@@ -1,6 +1,7 @@
 package dev.androidagent.net
 
 import dev.androidagent.AgentConfig
+import dev.androidagent.AgentLocation
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -72,7 +73,7 @@ class PhoneWebSocketClient(
         socket?.send(message.toString())
     }
 
-    fun sendRealtimeStart(sdp: String, requestConfig: AgentConfig = config) {
+    fun sendRealtimeStart(sdp: String, requestConfig: AgentConfig = config, location: AgentLocation? = null) {
         val message = JSONObject()
             .put("type", "realtime.start")
             .put("deviceId", requestConfig.deviceId)
@@ -81,6 +82,7 @@ class PhoneWebSocketClient(
             .put("model", requestConfig.model)
             .put("reasoningEffort", requestConfig.reasoningEffort)
         requestConfig.openAiApiKey.takeIf { it.isNotBlank() }?.let { message.put("openAiApiKey", it) }
+        location?.let { message.put("location", it.toJson()) }
         val sent = socket?.send(message.toString()) == true
         Log.i(TAG, "sendRealtimeStart sent=$sent sdpLength=${sdp.length}")
         if (!sent) {

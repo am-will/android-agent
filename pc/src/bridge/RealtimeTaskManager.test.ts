@@ -75,18 +75,21 @@ function createHarnessWithSearch(output = "search result") {
   const dispatcher = new FakeDispatcher();
   const messages: RealtimeOutboundMessage[] = [];
   const queries: string[] = [];
+  const locations: unknown[] = [];
   const manager = new RealtimeTaskManager({
     dispatcher,
     sendRealtime: (_deviceId, message) => messages.push(message),
     webSearch: {
-      async search({ query }) {
+      async search({ query, location }) {
         queries.push(query);
+        locations.push(location);
         return output;
       }
     },
-    getRealtimeApiKey: () => "test-key"
+    getRealtimeApiKey: () => "test-key",
+    getRealtimeLocation: () => ({ latitude: 31.7619, longitude: -106.485, accuracyMeters: 100 })
   });
-  return { dispatcher, manager, messages, queries };
+  return { dispatcher, manager, messages, queries, locations };
 }
 
 function results(messages: RealtimeOutboundMessage[]) {
@@ -221,11 +224,12 @@ test("steer_phone_task becomes a normal phone task when no turn is active", asyn
 });
 
 test("web_search returns search output without starting a phone task", async () => {
-  const { dispatcher, manager, messages, queries } = createHarnessWithSearch("It is sunny.");
+  const { dispatcher, manager, messages, queries, locations } = createHarnessWithSearch("It is sunny.");
 
   await manager.handleToolCall(namedToolCall("call_search", "web_search", { query: "El Paso weather today" }));
 
   assert.deepEqual(queries, ["El Paso weather today"]);
+  assert.deepEqual(locations, [{ latitude: 31.7619, longitude: -106.485, accuracyMeters: 100 }]);
   assert.deepEqual(dispatcher.requests, []);
   assert.equal(results(messages).find((message) => message.callId === "call_search")?.output, "It is sunny.");
 });

@@ -60,7 +60,7 @@ class AgentForegroundService : Service() {
         ).also { it.show() }
         voiceRuntimeController = VoiceRuntimeController(
             context = this,
-            sendStart = { sdp, config -> webSocketClient?.sendRealtimeStart(sdp, config) },
+            sendStart = { sdp, config -> webSocketClient?.sendRealtimeStart(sdp, config, AgentLocationProvider.currentBestEffortLocation(this)) },
             sendStop = { reason ->
                 webSocketClient?.sendRealtimeStop(reason)
                 webSocketClient?.sendStopRequest(reason)

@@ -93,6 +93,13 @@ class MainActivity : ComponentActivity() {
         refreshStatus()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_MIC_PERMISSION || requestCode == REQUEST_LOCATION_PERMISSION) {
+            refreshStatusSoon()
+        }
+    }
+
     private fun buildUi() {
         val config = AgentConfigStore.load(this)
         systemPromptText = config.systemPrompt
@@ -137,6 +144,7 @@ class MainActivity : ComponentActivity() {
             addView(sectionHeader("Readiness", "The agent only runs when the required Android capabilities are enabled.", palette))
             addView(statusRow("Overlay", "Required for the floating control bubble.", "overlay", palette))
             addView(statusRow("Microphone", "Used for realtime voice sessions.", "microphone", palette))
+            addView(statusRow("Location", "Optional context for weather and local questions.", "location", palette))
             addView(statusRow("Accessibility", "Allows command execution on screen.", "accessibility", palette))
             addView(statusRow("Agent Bubble", "Foreground service state.", "service", palette))
 
@@ -171,6 +179,9 @@ class MainActivity : ComponentActivity() {
             }, stackedParams(10))
             addView(actionButton("Grant Microphone Permission", ButtonTone.Secondary, palette) {
                 requestMicPermission()
+            }, stackedParams(10))
+            addView(actionButton("Grant Location Permission", ButtonTone.Secondary, palette) {
+                requestLocationPermission()
             }, stackedParams(10))
             addView(actionButton("Open Accessibility Settings", ButtonTone.Secondary, palette) {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -327,6 +338,7 @@ class MainActivity : ComponentActivity() {
         val config = AgentConfigStore.load(this)
         val overlay = Settings.canDrawOverlays(this)
         val microphone = hasMicPermission()
+        val location = AgentLocationProvider.hasLocationPermission(this)
         val accessibility = isAccessibilityEnabled()
         val service = AgentForegroundService.isRunning
         val palette = palette()
@@ -338,6 +350,7 @@ class MainActivity : ComponentActivity() {
 
         updateChip("overlay", if (overlay) "Granted" else "Missing", if (overlay) palette.success else palette.warning)
         updateChip("microphone", if (microphone) "Granted" else "Missing", if (microphone) palette.success else palette.warning)
+        updateChip("location", if (location) "Granted" else "Optional", if (location) palette.success else palette.muted)
         updateChip("accessibility", if (accessibility) "Enabled" else "Disabled", if (accessibility) palette.success else palette.warning)
         updateChip("service", if (service) "Running" else "Stopped", if (service) palette.success else palette.muted)
 
@@ -357,6 +370,16 @@ class MainActivity : ComponentActivity() {
     private fun requestMicPermission() {
         if (!hasMicPermission()) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MIC_PERMISSION)
+        }
+    }
+
+    private fun requestLocationPermission() {
+        if (!AgentLocationProvider.hasLocationPermission(this)) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
+                REQUEST_LOCATION_PERMISSION
+            )
         }
     }
 
@@ -696,5 +719,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_REQUEST_MIC_PERMISSION = "requestMicPermission"
         private const val REQUEST_MIC_PERMISSION = 20
+        private const val REQUEST_LOCATION_PERMISSION = 21
     }
 }

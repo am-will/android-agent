@@ -1,16 +1,19 @@
 import type { BridgeConfig } from "./config.js";
+import type { PhoneLocation } from "../protocol/messages.js";
 
 export interface OpenAiRealtimeStartOptions {
   deviceId: string;
   sdp: string;
   systemPrompt?: string;
   apiKey?: string;
+  location?: PhoneLocation;
 }
 
 export interface OpenAiRealtimeSession {
   deviceId: string;
   callId?: string;
   apiKey?: string;
+  location?: PhoneLocation;
 }
 
 const VOICE_PROMPT = `
@@ -24,6 +27,23 @@ If the user asks a current-events or factual lookup that does not require contro
 Ask a short clarification question when the instruction is ambiguous.
 Confirm only when an action is risky or irreversible, and never bypass Android or Codex safety confirmations.
 `.trim();
+
+export function formatLocationContext(location: PhoneLocation | undefined): string | undefined {
+  if (!location) {
+    return undefined;
+  }
+  const parts = [
+    `latitude ${location.latitude.toFixed(5)}`,
+    `longitude ${location.longitude.toFixed(5)}`
+  ];
+  if (typeof location.accuracyMeters === "number") {
+    parts.push(`accuracy about ${Math.round(location.accuracyMeters)} meters`);
+  }
+  if (location.provider) {
+    parts.push(`provider ${location.provider}`);
+  }
+  return `User location context: ${parts.join(", ")}. Use this for weather, local time, nearby places, and other localized questions unless the user gives a different location.`;
+}
 
 const RUN_PHONE_TASK_TOOL = {
   type: "function",
@@ -117,7 +137,7 @@ export class OpenAiRealtimeClient {
     const sessionConfig = {
       type: "realtime",
       model: this.config.openAiRealtimeModel,
-      instructions: [options.systemPrompt?.trim(), VOICE_PROMPT].filter(Boolean).join("\n\n"),
+      instructions: [options.systemPrompt?.trim(), formatLocationContext(options.location), VOICE_PROMPT].filter(Boolean).join("\n\n"),
       tools: [RUN_PHONE_TASK_TOOL, STEER_PHONE_TASK_TOOL, STOP_PHONE_TASK_TOOL, WEB_SEARCH_TOOL],
       tool_choice: "auto",
       audio: {
@@ -150,7 +170,8 @@ export class OpenAiRealtimeClient {
       session: {
         deviceId: options.deviceId,
         callId: callIdFromLocation(response.headers.get("location")),
-        apiKey
+        apiKey,
+        location: options.location
       }
     };
   }
