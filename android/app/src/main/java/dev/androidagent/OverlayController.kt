@@ -261,9 +261,9 @@ class OverlayController(
         composerInput = input
         transcriptionMicButton = ImageButton(context).apply {
             setImageResource(R.drawable.ic_mic)
-            background = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+            background = roundedDrawable(accent, dp(18))
             contentDescription = "Start voice transcription"
-            setColorFilter(primaryText)
+            setColorFilter(Color.WHITE)
             setPadding(dp(10), dp(10), dp(10), dp(10))
             setOnClickListener {
                 if (lastTranscriptionState.isRecording) {
@@ -344,11 +344,11 @@ class OverlayController(
             }
         }
         val micButton = Button(context).apply {
-            text = "Mic"
-            textSize = 12f
+            text = "🗣️"
+            textSize = 18f
             setTextColor(Color.WHITE)
             background = roundedDrawable(accent, dp(14))
-            contentDescription = "Start voice mode"
+            contentDescription = "Start realtime voice mode"
             setOnClickListener {
                 onStartVoice()
                 showVoiceSurface()
@@ -494,9 +494,8 @@ class OverlayController(
     }
 
     private fun renderTranscriptionState(state: VoiceTranscriptionState) {
-        val primaryText = themeColor(android.R.attr.textColorPrimary, 0xFF111111.toInt())
         val accent = themeColor(android.R.attr.colorAccent, 0xFF5B63F6.toInt())
-        val inactiveBackground = roundedDrawable(0x0F888888, dp(18), 0x22888888)
+        val disabledBackground = roundedDrawable(0x0F888888, dp(18), 0x22888888)
 
         transcriptionMicButton?.apply {
             isEnabled = !state.isTranscribing
@@ -505,12 +504,8 @@ class OverlayController(
                 state.isTranscribing -> "Transcribing audio"
                 else -> "Start voice transcription"
             }
-            background = if (state.isRecording) {
-                roundedDrawable(accent, dp(18))
-            } else {
-                inactiveBackground
-            }
-            setColorFilter(if (state.isRecording) Color.WHITE else primaryText)
+            background = if (state.isTranscribing) disabledBackground else roundedDrawable(accent, dp(18))
+            setColorFilter(Color.WHITE)
         }
         transcriptionCancelButton?.visibility = if (state.isRecording) View.VISIBLE else View.GONE
 
