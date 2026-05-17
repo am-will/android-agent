@@ -37,6 +37,7 @@ class VoiceRuntimeController(
     private val context: Context,
     private val sendStart: (sdp: String, config: AgentConfig) -> Unit,
     private val sendStop: (reason: String) -> Unit,
+    private val sendUserPrompt: (text: String, config: AgentConfig) -> Unit,
     private val onStateChanged: (VoiceRuntimeState) -> Unit
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -73,7 +74,7 @@ class VoiceRuntimeController(
             runCatching {
                 val offer = nextSession.createOffer()
                 sendStart(offer, config)
-                updateState(state.copy(status = VoiceRuntimeStatus.LISTENING, error = null))
+                updateState(state.copy(status = VoiceRuntimeStatus.CONNECTING, error = "Waiting for realtime answer."))
             }.onFailure { error ->
                 cleanup(sendBackendStop = false)
                 updateState(
@@ -93,6 +94,10 @@ class VoiceRuntimeController(
     }
 
     fun stopFromUi() {
+        val spokenPrompt = transcriptNormalizer.snapshot().userText.trim()
+        if (spokenPrompt.isNotBlank()) {
+            sendUserPrompt(spokenPrompt, AgentConfigStore.load(context))
+        }
         cleanup(sendBackendStop = true, reason = "Stopped from Android voice UI")
     }
 
@@ -180,7 +185,7 @@ class VoiceRuntimeController(
                     val transcript = transcriptNormalizer.applyEvent(type, event)
                     updateState(state.copy(status = VoiceRuntimeStatus.LISTENING, transcript = transcript.displayText, error = null))
                 }
-                type.contains("transcript") || type == "conversation.item.created" -> {
+                type.contains("transcript") || type == "conversation.item.created" || type.startsWith("response.output_text.") -> {
                     val transcript = transcriptNormalizer.applyEvent(type, event)
                     updateState(
                         state.copy(

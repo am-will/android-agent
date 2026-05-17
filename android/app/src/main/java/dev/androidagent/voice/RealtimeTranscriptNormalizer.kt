@@ -21,6 +21,9 @@ data class VoiceTranscriptState(
     val displayText: String = lines
         .filter { it.text.isNotBlank() }
         .joinToString("\n") { "${it.role.displayName}: ${it.text}" }
+    val userText: String = lines
+        .filter { it.role == VoiceTranscriptRole.USER && it.text.isNotBlank() }
+        .joinToString("\n") { it.text }
 }
 
 class RealtimeTranscriptNormalizer {
@@ -43,6 +46,11 @@ class RealtimeTranscriptNormalizer {
             "realtime.transcript_delta",
             "response.audio_transcript.delta",
             "response.audio_transcript.done",
+            "response.output_audio_transcript.delta",
+            "response.output_audio_transcript.done",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "conversation.item.input_audio_transcription.delta",
             "conversation.item.input_audio_transcription.completed" -> applyTranscript(type, payload)
 
             "realtime.item_added",

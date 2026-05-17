@@ -59,7 +59,8 @@ export const realtimeStartMessageSchema = z.object({
   sdp: z.string().min(1),
   systemPrompt: z.string().optional(),
   model: z.enum(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]).optional(),
-  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
+  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+  openAiApiKey: z.string().optional()
 });
 
 export const realtimeStopMessageSchema = z.object({

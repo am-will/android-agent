@@ -5,11 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.Manifest
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.app.ServiceCompat
@@ -33,9 +35,7 @@ class AgentForegroundService : Service() {
             onStop = { webSocketClient?.sendStopRequest("Stopped from Android overlay") },
             onDismiss = { stopSelf() },
             onStartVoice = {
-                if (hasMicPermission()) {
-                    ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = true))
-                }
+                promoteVoiceForegroundIfAllowed()
                 voiceRuntimeController?.start()
             },
             onToggleVoiceMute = { voiceRuntimeController?.toggleMute() },
@@ -45,6 +45,7 @@ class AgentForegroundService : Service() {
             context = this,
             sendStart = { sdp, config -> webSocketClient?.sendRealtimeStart(sdp, config) },
             sendStop = { reason -> webSocketClient?.sendRealtimeStop(reason) },
+            sendUserPrompt = { text, config -> webSocketClient?.sendUserRequest(text, config) },
             onStateChanged = { state -> overlayController?.setVoiceState(state) }
         )
         connectWebSocket()
@@ -105,6 +106,23 @@ class AgentForegroundService : Service() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun promoteVoiceForegroundIfAllowed() {
+        if (!hasMicPermission()) {
+            return
+        }
+        runCatching {
+            ServiceCompat.startForeground(this, 1, notification(), foregroundServiceType(includeMicrophone = true))
+        }.onFailure { error ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && error is ForegroundServiceStartNotAllowedException) {
+                Log.w(TAG, "Voice foreground-service promotion was not allowed; continuing with existing foreground service.", error)
+            } else if (error is SecurityException || error is IllegalArgumentException) {
+                Log.w(TAG, "Voice foreground-service promotion failed; continuing with existing foreground service.", error)
+            } else {
+                throw error
+            }
+        }
+    }
+
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             val channel = NotificationChannel(CHANNEL_ID, "Android Agent", NotificationManager.IMPORTANCE_LOW)
@@ -122,6 +140,7 @@ class AgentForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "AgentService"
         const val CHANNEL_ID = "android-agent"
         var isRunning: Boolean = false
             private set

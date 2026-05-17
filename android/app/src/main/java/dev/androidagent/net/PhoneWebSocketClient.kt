@@ -9,6 +9,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -76,7 +77,12 @@ class PhoneWebSocketClient(
             .put("systemPrompt", requestConfig.systemPrompt)
             .put("model", requestConfig.model)
             .put("reasoningEffort", requestConfig.reasoningEffort)
-        socket?.send(message.toString())
+        requestConfig.openAiApiKey.takeIf { it.isNotBlank() }?.let { message.put("openAiApiKey", it) }
+        val sent = socket?.send(message.toString()) == true
+        Log.i(TAG, "sendRealtimeStart sent=$sent sdpLength=${sdp.length}")
+        if (!sent) {
+            onRealtimeError(JSONObject().put("type", "realtime.error").put("message", "Phone WebSocket is not connected for realtime voice."))
+        }
     }
 
     fun sendRealtimeStop(reason: String) {
@@ -84,7 +90,8 @@ class PhoneWebSocketClient(
             .put("type", "realtime.stop")
             .put("deviceId", config.deviceId)
             .put("reason", reason)
-        socket?.send(message.toString())
+        val sent = socket?.send(message.toString()) == true
+        Log.i(TAG, "sendRealtimeStop sent=$sent")
     }
 
     override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -103,6 +110,9 @@ class PhoneWebSocketClient(
 
     override fun onMessage(webSocket: WebSocket, text: String) {
         val message = JSONObject(text)
+        if (message.optString("type").startsWith("realtime.")) {
+            Log.i(TAG, "received ${message.optString("type")}")
+        }
         when (message.optString("type")) {
             "command" -> handleCommand(webSocket, message)
             "agent_status" -> onStatus(message.optString("text"))
@@ -148,5 +158,9 @@ class PhoneWebSocketClient(
             result.screenshotBase64?.let { response.put("screenshotBase64", it) }
             webSocket.send(response.toString())
         }
+    }
+
+    companion object {
+        private const val TAG = "PhoneWebSocketClient"
     }
 }

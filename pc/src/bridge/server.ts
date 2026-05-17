@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer } from "ws";
 import { AuditLog } from "./AuditLog.js";
 import { Dispatcher } from "../dispatcher/dispatcher.js";
-import { CodexAppServerClient, type RealtimeEventSink } from "../dispatcher/CodexAppServerClient.js";
+import { OpenAiRealtimeClient, type OpenAiRealtimeSession } from "./OpenAiRealtimeClient.js";
 import {
   inboundPhoneMessageSchema,
   phoneCommandSchema,
@@ -18,13 +18,9 @@ const config = getBridgeConfig();
 const audit = new AuditLog();
 const hub = new PhoneHub(config.defaultDeviceId, audit);
 const dispatcher = new Dispatcher(hub, audit);
-const realtimeClient = new CodexAppServerClient(audit);
+const realtimeClient = new OpenAiRealtimeClient(config);
 
-interface ActiveRealtimeSession {
-  threadId: string;
-}
-
-const realtimeSessions = new Map<string, ActiveRealtimeSession>();
+const realtimeSessions = new Map<string, OpenAiRealtimeSession>();
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const data = JSON.stringify(body);
@@ -62,31 +58,6 @@ function sendRealtimeError(deviceId: string, message: string): void {
   });
 }
 
-function buildRealtimeSink(deviceId: string): RealtimeEventSink {
-  return {
-    sdp: (sdp) => sendRealtime(deviceId, { type: "realtime.sdp", deviceId, sdp }),
-    transcriptDelta: (delta) => sendRealtime(deviceId, {
-      type: "realtime.transcript_delta",
-      deviceId,
-      ...delta
-    }),
-    itemAdded: (item) => sendRealtime(deviceId, { type: "realtime.item_added", deviceId, item }),
-    speechStarted: (event) => sendRealtime(deviceId, {
-      type: "realtime.speech_started",
-      deviceId,
-      ...event
-    }),
-    error: (message) => {
-      realtimeSessions.delete(deviceId);
-      sendRealtimeError(deviceId, message);
-    },
-    closed: (reason) => {
-      realtimeSessions.delete(deviceId);
-      sendRealtime(deviceId, { type: "realtime.closed", deviceId, reason });
-    }
-  };
-}
-
 async function startRealtimeSession(message: RealtimeStartMessage, registeredDeviceId: string): Promise<void> {
   if (message.deviceId !== registeredDeviceId) {
     sendRealtimeError(registeredDeviceId, `realtime.start deviceId ${message.deviceId} does not match registered device ${registeredDeviceId}`);
@@ -99,17 +70,28 @@ async function startRealtimeSession(message: RealtimeStartMessage, registeredDev
   }
 
   try {
-    const session = await realtimeClient.startRealtime({
+    audit.record("openai_realtime_starting", message.deviceId, {
+      model: config.openAiRealtimeModel,
+      voice: config.openAiRealtimeVoice,
+      sdpLength: message.sdp.length
+    });
+    const { answerSdp, session } = await realtimeClient.start({
       deviceId: message.deviceId,
       sdp: message.sdp,
       systemPrompt: message.systemPrompt,
-      model: message.model,
-      reasoningEffort: message.reasoningEffort
-    }, buildRealtimeSink(message.deviceId));
-    realtimeSessions.set(message.deviceId, { threadId: session.threadId });
+      apiKey: message.openAiApiKey
+    });
+    realtimeSessions.set(message.deviceId, session);
+    audit.record("openai_realtime_started", message.deviceId, {
+      callId: session.callId ?? null,
+      answerSdpLength: answerSdp.length
+    });
+    sendRealtime(message.deviceId, { type: "realtime.sdp", deviceId: message.deviceId, sdp: answerSdp });
   } catch (error) {
     realtimeSessions.delete(message.deviceId);
-    sendRealtimeError(message.deviceId, error instanceof Error ? error.message : String(error));
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    audit.record("openai_realtime_error", message.deviceId, { message: errorMessage });
+    sendRealtimeError(message.deviceId, errorMessage);
   }
 }
 
@@ -119,7 +101,9 @@ async function stopRealtimeSession(deviceId: string, reason = "Stopped by user")
     sendRealtime(deviceId, { type: "realtime.closed", deviceId, reason });
     return;
   }
-  await realtimeClient.stopRealtime(session.threadId, reason);
+  realtimeSessions.delete(deviceId);
+  await realtimeClient.stop(session);
+  sendRealtime(deviceId, { type: "realtime.closed", deviceId, reason });
 }
 
 async function handleRealtimeStop(message: RealtimeStopMessage, registeredDeviceId: string): Promise<void> {
@@ -312,7 +296,7 @@ wss.on("connection", (socket) => {
       const session = realtimeSessions.get(disconnectedDeviceId);
       if (session) {
         realtimeSessions.delete(disconnectedDeviceId);
-        realtimeClient.stopRealtime(session.threadId, "Phone disconnected").catch((error) => {
+        realtimeClient.stop(session).catch((error) => {
           console.warn(`[realtime] ${disconnectedDeviceId}: failed to stop after disconnect: ${error instanceof Error ? error.message : String(error)}`);
         });
       }

@@ -66,7 +66,9 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
 
 ## Realtime Voice
 
-Realtime voice mode is Codex-backed. Android creates the WebRTC offer, sends it to the PC bridge, and the bridge forwards it to the Codex app-server experimental realtime API. Android message names use dotted `realtime.*` types.
+Realtime voice mode uses Android WebRTC for live audio and the PC bridge for OpenAI Realtime session creation. Android creates the WebRTC offer, sends it to the PC bridge, and the bridge posts it to OpenAI's `/v1/realtime/calls` endpoint. Android message names use dotted `realtime.*` types.
+
+The OpenAI API key can be supplied either by setting `OPENAI_API_KEY` on the PC bridge or by saving it in the Android app settings. If the Android app sends an `openAiApiKey` in `realtime.start`, the bridge uses it only for that realtime call.
 
 ### Start
 
@@ -76,11 +78,12 @@ Android sends:
 {
   "type": "realtime.start",
   "deviceId": "pixel",
-  "sdp": "v=0\r\n..."
+  "sdp": "v=0\r\n...",
+  "openAiApiKey": "sk-..."
 }
 ```
 
-Optional fields: `systemPrompt`, `model`, and `reasoningEffort`.
+Optional fields: `systemPrompt`, `model`, `reasoningEffort`, and `openAiApiKey`.
 
 The bridge replies with the remote SDP answer:
 
@@ -127,7 +130,7 @@ Raw non-audio realtime items are forwarded for Android-side normalization or deb
 }
 ```
 
-Speech-start notifications are sent when the Codex app-server emits a speech-start notification or forwards a raw item whose type contains `speech_started`:
+Speech-start notifications are shown when the WebRTC data channel emits an OpenAI speech-start event:
 
 ```json
 {
@@ -150,13 +153,13 @@ Android sends:
 }
 ```
 
-The bridge sends `realtime.error` if Codex rejects startup, stop, or a runtime realtime event fails:
+The bridge sends `realtime.error` if OpenAI rejects startup, stop, or a runtime realtime event fails:
 
 ```json
 {
   "type": "realtime.error",
   "deviceId": "pixel",
-  "message": "Codex app-server rejected experimental thread/realtime/start: method not found"
+  "message": "OpenAI realtime call failed: 401 Unauthorized"
 }
 ```
 

@@ -45,10 +45,11 @@ class RealtimeWebRtcSession(
     private val iceGatheringComplete = CompletableDeferred<Unit>()
 
     suspend fun createOffer(): String = withContext(Dispatchers.Main) {
-        ensureFactoryInitialized(context)
+        val appContext = context.applicationContext
+        ensureFactoryInitialized(appContext)
         acquireAudioFocus()
 
-        val adm = JavaAudioDeviceModule.builder(context)
+        val adm = JavaAudioDeviceModule.builder(appContext)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .createAudioDeviceModule()
@@ -59,7 +60,9 @@ class RealtimeWebRtcSession(
             .createPeerConnectionFactory()
         factory = createdFactory
 
-        val config = PeerConnection.RTCConfiguration(emptyList()).apply {
+        val config = PeerConnection.RTCConfiguration(listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+        )).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
@@ -103,16 +106,28 @@ class RealtimeWebRtcSession(
         if (!disposed.compareAndSet(false, true)) {
             return
         }
-        eventsChannel?.unregisterObserver()
-        eventsChannel?.close()
-        eventsChannel?.dispose()
-        audioTrack?.dispose()
-        audioSource?.dispose()
-        peerConnection?.close()
-        peerConnection?.dispose()
-        factory?.dispose()
-        audioDeviceModule?.release()
-        releaseAudioFocus()
+        val channel = eventsChannel
+        val track = audioTrack
+        val source = audioSource
+        val connection = peerConnection
+        val createdFactory = factory
+        val adm = audioDeviceModule
+        eventsChannel = null
+        audioTrack = null
+        audioSource = null
+        peerConnection = null
+        factory = null
+        audioDeviceModule = null
+
+        runCatching { channel?.unregisterObserver() }
+        runCatching { channel?.close() }
+        runCatching { track?.setEnabled(false) }
+        runCatching { connection?.close() }
+        runCatching { track?.dispose() }
+        runCatching { source?.dispose() }
+        runCatching { createdFactory?.dispose() }
+        runCatching { adm?.release() }
+        runCatching { releaseAudioFocus() }
     }
 
     private fun observer(): PeerConnection.Observer {

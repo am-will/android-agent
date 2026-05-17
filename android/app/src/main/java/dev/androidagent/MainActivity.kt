@@ -2,6 +2,7 @@ package dev.androidagent
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -28,10 +29,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var hostInput: EditText
     private lateinit var deviceInput: EditText
     private lateinit var tokenInput: EditText
-    private lateinit var systemPromptInput: EditText
+    private lateinit var openAiKeyInput: EditText
+    private lateinit var systemPromptSummary: TextView
     private lateinit var modelSpinner: Spinner
     private lateinit var reasoningSpinner: Spinner
     private lateinit var statusText: TextView
+    private var systemPromptText: String = DefaultSystemPrompt.text
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +60,7 @@ class MainActivity : ComponentActivity() {
 
     private fun buildUi() {
         val config = AgentConfigStore.load(this)
+        systemPromptText = config.systemPrompt
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 48, 32, 32)
@@ -86,10 +90,17 @@ class MainActivity : ComponentActivity() {
             setText(config.token)
             setSingleLine(true)
         }
+        openAiKeyInput = EditText(this).apply {
+            hint = "OpenAI API key for realtime voice"
+            setText(config.openAiApiKey)
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
 
         root.addView(hostInput)
         root.addView(deviceInput)
         root.addView(tokenInput)
+        root.addView(openAiKeyInput)
 
         root.addView(TextView(this).apply {
             text = "Model"
@@ -126,19 +137,15 @@ class MainActivity : ComponentActivity() {
             textSize = 18f
             setPadding(0, 24, 0, 4)
         })
-        root.addView(TextView(this).apply {
-            text = "This prompt is sent with every new request. Each request starts a fresh Codex thread."
+        systemPromptSummary = TextView(this).apply {
+            text = systemPromptPreview()
             textSize = 13f
-        })
-        systemPromptInput = EditText(this).apply {
-            hint = "System prompt"
-            setText(config.systemPrompt)
-            minLines = 8
-            maxLines = 16
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            setHorizontallyScrolling(false)
         }
-        root.addView(systemPromptInput)
+        root.addView(systemPromptSummary)
+        root.addView(Button(this).apply {
+            text = "Edit System Prompt"
+            setOnClickListener { showSystemPromptEditor() }
+        })
 
         root.addView(Button(this).apply {
             text = "Save Settings"
@@ -201,11 +208,47 @@ class MainActivity : ComponentActivity() {
                 hostUrl = hostInput.text.toString().trim(),
                 deviceId = deviceInput.text.toString().trim(),
                 token = tokenInput.text.toString().trim(),
-                systemPrompt = systemPromptInput.text.toString().trim().ifBlank { DefaultSystemPrompt.text },
+                openAiApiKey = openAiKeyInput.text.toString().trim(),
+                systemPrompt = systemPromptText.trim().ifBlank { DefaultSystemPrompt.text },
                 model = AgentModelOptions.models.getOrElse(modelSpinner.selectedItemPosition) { AgentModelOptions.models.first() }.id,
                 reasoningEffort = AgentModelOptions.reasoningEfforts.getOrElse(reasoningSpinner.selectedItemPosition) { AgentModelOptions.reasoningEfforts[1] }.id
             )
         )
+    }
+
+    private fun showSystemPromptEditor() {
+        val editor = EditText(this).apply {
+            setText(systemPromptText)
+            minLines = 10
+            maxLines = 18
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setHorizontallyScrolling(false)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("System Prompt")
+            .setView(ScrollView(this).apply {
+                setPadding(32, 16, 32, 0)
+                addView(editor)
+            })
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Reset") { _, _ ->
+                systemPromptText = DefaultSystemPrompt.text
+                systemPromptSummary.text = systemPromptPreview()
+            }
+            .setPositiveButton("Save") { _, _ ->
+                systemPromptText = editor.text.toString().trim().ifBlank { DefaultSystemPrompt.text }
+                systemPromptSummary.text = systemPromptPreview()
+            }
+            .show()
+    }
+
+    private fun systemPromptPreview(): String {
+        val normalized = systemPromptText.trim().replace(Regex("\\s+"), " ")
+        return if (normalized.length <= 140) {
+            normalized
+        } else {
+            "${normalized.take(137)}..."
+        }
     }
 
     private fun openOverlaySettings() {

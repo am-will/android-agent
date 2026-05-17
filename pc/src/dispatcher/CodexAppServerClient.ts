@@ -169,7 +169,7 @@ export class CodexAppServerClient implements AgentClient {
       const result = await this.request("thread/realtime/start", {
         threadId,
         transport: { type: "webrtc", sdp: options.sdp },
-        outputModalities: ["audio", "text"],
+        outputModality: "audio",
         reasoningEffort: options.reasoningEffort
       });
       const realtimeSessionId = (result as { realtimeSessionId?: string | null; session?: { id?: string | null } })?.realtimeSessionId
