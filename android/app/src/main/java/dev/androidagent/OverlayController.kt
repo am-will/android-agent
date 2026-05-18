@@ -46,6 +46,7 @@ import dev.androidagent.chat.ChatTimelineItem
 import dev.androidagent.ui.AnchoredPicker
 import dev.androidagent.ui.DesignTokens
 import dev.androidagent.ui.Drawables
+import dev.androidagent.ui.MarkdownRenderer
 import dev.androidagent.ui.ThemeTokens
 import dev.androidagent.ui.Typography
 import org.json.JSONObject
@@ -1210,9 +1211,9 @@ class OverlayController(
         val isStreaming = !isUser && item.isStreaming && item.text.isBlank()
 
         val bubble = TextView(context).apply {
-            text = if (isStreaming) "•  •  •" else item.text
             Typography.applyCallout(this, tokens)
             setTextColor(if (isUser) tokens.bubbleUserInk else tokens.bubbleAssistantInk)
+            setLinkTextColor(tokens.accent)
             setPadding(
                 dp(DesignTokens.Spacing.md + 2),
                 dp(DesignTokens.Spacing.sm + 2),
@@ -1222,8 +1223,14 @@ class OverlayController(
             setLineSpacing(dp(DesignTokens.Spacing.xs).toFloat(), 1.0f)
             background = if (isUser) Drawables.chatBubbleUser(context, tokens)
                 else Drawables.chatBubbleAssistant(context, tokens)
+            movementMethod = android.text.method.LinkMovementMethod.getInstance()
             if (isStreaming) {
+                text = "•  •  •"
                 animateStreamingDots(this)
+            } else if (isUser) {
+                text = item.text
+            } else {
+                MarkdownRenderer.render(this, item.text, tokens)
             }
         }
 
