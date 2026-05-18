@@ -418,6 +418,21 @@ export class OpenClawChatBridge {
 
   private async fallbackSend(message: ChatSendMessage, runId: string, taskKind: "general" | "phone" = "general"): Promise<void> {
     const state = this.stateFor(message.deviceId);
+    this.sendChat(message.deviceId, {
+      type: "chat.history",
+      deviceId: message.deviceId,
+      sessionKey: state.sessionKey,
+      sessionId: state.sessionId,
+      messages: [
+        {
+          id: `user_${runId}`,
+          role: "user",
+          text: message.text,
+          timestamp: Date.now()
+        }
+      ]
+    });
+    this.sendState(message.deviceId, taskKind === "phone" ? "Using Android phone tools" : "Using OpenClaw fallback");
     try {
       const legacyRequest: UserRequestMessage = {
         type: "user_request",
@@ -439,7 +454,7 @@ export class OpenClawChatBridge {
       this.sendChatError(message.deviceId, state.sessionKey, error);
     } finally {
       state.runId = null;
-      this.sendState(message.deviceId, "Fallback finished");
+      this.sendState(message.deviceId, "OpenClaw finished");
     }
   }
 }

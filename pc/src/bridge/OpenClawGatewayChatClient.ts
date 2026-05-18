@@ -89,7 +89,7 @@ export function normalizeHistoryMessage(value: unknown): ChatHistoryMessage | un
     return undefined;
   }
   const role = stringField(record, "role") ?? "assistant";
-  const text = extractGatewayText(record.content ?? record.text ?? record.message);
+  const text = sanitizeHistoryText(role, extractGatewayText(record.content ?? record.text ?? record.message));
   if (!text.trim()) {
     return undefined;
   }
@@ -100,6 +100,18 @@ export function normalizeHistoryMessage(value: unknown): ChatHistoryMessage | un
     text,
     timestamp: numberField(record, "timestamp")
   };
+}
+
+function sanitizeHistoryText(role: string, text: string): string {
+  if (role !== "user") {
+    return text;
+  }
+  const marker = "User request:";
+  const index = text.lastIndexOf(marker);
+  if (index === -1) {
+    return text;
+  }
+  return text.slice(index + marker.length).trim();
 }
 
 export function normalizeModels(value: unknown): ChatModelOption[] {

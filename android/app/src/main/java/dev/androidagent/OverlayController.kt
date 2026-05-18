@@ -569,7 +569,7 @@ class OverlayController(
 
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            background = recessedInsetDrawable(palette, dp(28))
+            background = topRoundedInsetDrawable(palette, dp(28))
             composerContainer = this
             addView(input, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -1548,24 +1548,22 @@ class OverlayController(
     }
 
     private fun positionComposerAboveKeyboard(panel: View) {
-        val composer = composerContainer ?: return
         val visible = Rect()
         panel.getWindowVisibleDisplayFrame(visible)
         val displayHeight = context.resources.displayMetrics.heightPixels
         val keyboardHeight = displayHeight - visible.bottom
         if (keyboardHeight < dp(120)) {
-            composer.animate().cancel()
-            composer.translationY = 0f
+            panel.animate().cancel()
+            panel.translationY = 0f
             return
         }
 
-        composer.translationY = 0f
+        panel.translationY = 0f
         val location = IntArray(2)
-        composer.getLocationOnScreen(location)
-        val composerBottom = location[1] + composer.height
-        val desiredBottom = visible.bottom - dp(10)
-        val overlap = composerBottom - desiredBottom
-        composer.translationY = if (overlap > 0) -overlap.toFloat() else 0f
+        panel.getLocationOnScreen(location)
+        val panelBottom = location[1] + panel.height
+        val overlap = panelBottom - visible.bottom
+        panel.translationY = if (overlap > 0) -overlap.toFloat() else 0f
     }
 
     private fun overlayPalette(): OverlayPalette {
@@ -1626,6 +1624,17 @@ class OverlayController(
         }
     }
 
+    private fun topRoundedInsetDrawable(palette: OverlayPalette, radius: Int): LayerDrawable {
+        return LayerDrawable(
+            arrayOf(
+                topRoundedDrawable(palette.recessedSurface, radius, palette.border),
+                topRoundedDrawable(blend(palette.recessedSurface, palette.surface, 0.42f), radius - dp(2))
+            )
+        ).apply {
+            setLayerInset(1, dp(1), dp(1), dp(1), 0)
+        }
+    }
+
     private fun controlDrawable(palette: OverlayPalette, radius: Int = dp(18)): GradientDrawable {
         return roundedDrawable(palette.controlSurface, radius, palette.border)
     }
@@ -1642,6 +1651,15 @@ class OverlayController(
         return GradientDrawable().apply {
             setColor(color)
             cornerRadius = radius.toFloat()
+            strokeColor?.let { setStroke(strokeWidth, it) }
+        }
+    }
+
+    private fun topRoundedDrawable(color: Int, radius: Int, strokeColor: Int? = null, strokeWidth: Int = 1): GradientDrawable {
+        val r = radius.toFloat()
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
             strokeColor?.let { setStroke(strokeWidth, it) }
         }
     }
