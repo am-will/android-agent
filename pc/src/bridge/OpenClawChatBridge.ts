@@ -87,6 +87,11 @@ export class OpenClawChatBridge {
     }
 
     const idempotencyKey = message.idempotencyKey ?? randomUUID();
+    if (isExplicitPhoneTask(text)) {
+      await this.fallbackSend(message, idempotencyKey, "phone");
+      return;
+    }
+
     try {
       const result = await this.client.sendChat({
         sessionKey: state.sessionKey,
@@ -147,39 +152,21 @@ export class OpenClawChatBridge {
 
   async newSession(message: ChatNewSessionMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
-    try {
-      const created = await this.client.createSession({
-        key: message.key,
-        label: message.label,
-        model: message.model
-      });
-      const record = created && typeof created === "object" ? created as Record<string, unknown> : {};
-      const key = typeof record.key === "string" && record.key.trim() ? record.key : state.sessionKey;
-      state.sessionKey = key;
-      state.sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
-      state.model = message.model ?? state.model ?? null;
-      state.runId = null;
-      this.sendState(message.deviceId, "Created new session");
-      await this.refreshDevice(message.deviceId);
-    } catch (error) {
-      this.sendChatError(message.deviceId, state.sessionKey, error);
-    }
+    await this.sendSlashCommand(message.deviceId, "/new", state.sessionKey, "Creating new session");
   }
 
   async setModel(message: ChatSetModelMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
     const sessionKey = message.sessionKey ?? state.sessionKey;
     state.model = message.model;
-    await this.patchSession(message.deviceId, sessionKey, { model: message.model });
-    await this.refreshMetadata(message.deviceId);
+    await this.sendSlashCommand(message.deviceId, `/model ${message.model}`, sessionKey, `Model: ${message.model}`);
   }
 
   async setReasoning(message: ChatSetReasoningMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
     const sessionKey = message.sessionKey ?? state.sessionKey;
     state.reasoningEffort = message.reasoningEffort;
-    await this.patchSession(message.deviceId, sessionKey, { thinkingLevel: message.reasoningEffort });
-    await this.refreshMetadata(message.deviceId);
+    await this.sendSlashCommand(message.deviceId, `/think ${message.reasoningEffort}`, sessionKey, `Reasoning: ${message.reasoningEffort}`);
   }
 
   async controlCommand(message: ChatControlCommandMessage): Promise<void> {
@@ -191,15 +178,13 @@ export class OpenClawChatBridge {
 
     if (command === "fast") {
       const enabled = typeof message.args.enabled === "boolean" ? message.args.enabled : undefined;
-      await this.patchSession(message.deviceId, state.sessionKey, { fastMode: enabled ?? null });
-      await this.refreshMetadata(message.deviceId);
+      await this.sendSlashCommand(message.deviceId, `/fast ${enabled === false ? "off" : "on"}`, state.sessionKey, "Updating fast mode");
       return;
     }
 
     if (command === "verbose") {
-      const level = typeof message.args.level === "string" ? message.args.level : null;
-      await this.patchSession(message.deviceId, state.sessionKey, { verboseLevel: level });
-      await this.refreshMetadata(message.deviceId);
+      const level = typeof message.args.level === "string" && message.args.level.trim() ? message.args.level.trim() : "on";
+      await this.sendSlashCommand(message.deviceId, `/verbose ${level}`, state.sessionKey, "Updating verbosity");
       return;
     }
 
@@ -351,6 +336,22 @@ export class OpenClawChatBridge {
     }
   }
 
+  private async sendSlashCommand(deviceId: string, text: string, sessionKey: string, status: string): Promise<void> {
+    try {
+      const result = await this.client.sendChat({
+        sessionKey,
+        message: text,
+        idempotencyKey: randomUUID()
+      });
+      const state = this.stateFor(deviceId);
+      state.sessionKey = result.sessionKey;
+      state.runId = result.runId;
+      this.sendState(deviceId, status);
+    } catch (error) {
+      this.sendChatError(deviceId, sessionKey, error);
+    }
+  }
+
   private handleGatewayChatEvent(payload: unknown): void {
     for (const [deviceId, state] of this.devices) {
       const message = mapGatewayChatEvent(deviceId, payload);
@@ -415,7 +416,7 @@ export class OpenClawChatBridge {
     });
   }
 
-  private async fallbackSend(message: ChatSendMessage, runId: string): Promise<void> {
+  private async fallbackSend(message: ChatSendMessage, runId: string, taskKind: "general" | "phone" = "general"): Promise<void> {
     const state = this.stateFor(message.deviceId);
     try {
       const legacyRequest: UserRequestMessage = {
@@ -426,7 +427,7 @@ export class OpenClawChatBridge {
         model: undefined,
         reasoningEffort: undefined
       };
-      const result = await this.dispatcher.handleUserRequest(legacyRequest);
+      const result = await this.dispatcher.handleUserRequest(legacyRequest, { taskKind });
       this.sendChat(message.deviceId, {
         type: "chat.final",
         deviceId: message.deviceId,
@@ -441,4 +442,10 @@ export class OpenClawChatBridge {
       this.sendState(message.deviceId, "Fallback finished");
     }
   }
+}
+
+function isExplicitPhoneTask(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return /\b(android|phone|device|screen|app|tap|swipe|scroll|keyboard|notification|settings app|facebook app|instagram app|messages app|sms)\b/.test(normalized)
+    && !/\b(mac|desktop|pc|laptop|browser|terminal|repo|codebase)\b/.test(normalized);
 }

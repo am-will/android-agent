@@ -369,6 +369,26 @@ class OverlayController(
         }
         val voice = buildVoiceSurface(palette)
         val composer = buildComposer(palette, input)
+        val voiceButton = iconButton(
+            palette = palette,
+            drawableRes = R.drawable.ic_voice_wave,
+            contentDescription = "Start realtime voice mode"
+        ) { onStartVoice() }
+        val settingsButton = iconButton(
+            palette = palette,
+            drawableRes = R.drawable.ic_settings_gear,
+            contentDescription = "Open Claw Agent settings"
+        ) {
+            dismissPanel()
+            openSettings()
+        }
+        val topActions = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(10), 0)
+            addView(voiceButton, LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(8) })
+            addView(settingsButton, LinearLayout.LayoutParams(dp(30), dp(30)))
+        }
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             isFocusableInTouchMode = true
@@ -383,6 +403,10 @@ class OverlayController(
                     false
                 }
             }
+            addView(topActions, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(34)
+            ))
             addView(voice)
             addView(historyScroll, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -404,15 +428,15 @@ class OverlayController(
         }
 
         val display = context.resources.displayMetrics
-        val topGap = dp(92)
+        val modalHeight = (display.heightPixels * CHAT_MODAL_HEIGHT_FRACTION).toInt()
         val params = overlayParams(
             width = display.widthPixels,
-            height = display.heightPixels - topGap,
+            height = modalHeight,
             focusable = true
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 0
-            y = topGap
+            y = display.heightPixels - modalHeight
         }
         input.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
