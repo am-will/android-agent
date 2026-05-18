@@ -1037,7 +1037,6 @@ class OverlayController(
         val plusAnchor: View = plusButton ?: panelContent ?: panelHost ?: return
 
         val sessions = lastChatState.sessions
-        val tools = lastChatState.tools
         val commands = lastChatState.commands
 
         val sessionRows = mutableListOf<AnchoredPicker.Row>()
@@ -1056,22 +1055,11 @@ class OverlayController(
             ))
         }
 
-        val toolRows = mutableListOf<AnchoredPicker.Row>()
-        val visibleTools = tools.filterNot { isAgentInternalTool(it.id, it.label) }
-        if (visibleTools.isNotEmpty()) {
-            visibleTools.take(8).forEach { tool ->
-                toolRows.add(AnchoredPicker.Row(
-                    label = tool.label ?: tool.id,
-                    sublabel = tool.description?.take(64),
-                    iconRes = R.drawable.ic_tools,
-                    onSelect = { setStatus(tool.description ?: tool.id) }
-                ))
-            }
-        }
+        val commandRows = mutableListOf<AnchoredPicker.Row>()
         if (commands.isNotEmpty()) {
-            commands.take(8).forEach { command ->
+            commands.take(20).forEach { command ->
                 val text = command.aliases.firstOrNull() ?: "/${command.name}"
-                toolRows.add(AnchoredPicker.Row(
+                commandRows.add(AnchoredPicker.Row(
                     label = text,
                     sublabel = command.description?.take(64),
                     iconRes = R.drawable.ic_command,
@@ -1134,7 +1122,7 @@ class OverlayController(
 
         val sections = mutableListOf<AnchoredPicker.Section>()
         sections.add(AnchoredPicker.Section("Session", sessionRows))
-        if (toolRows.isNotEmpty()) sections.add(AnchoredPicker.Section("Tools & commands", toolRows))
+        if (commandRows.isNotEmpty()) sections.add(AnchoredPicker.Section("Commands", commandRows))
         sections.add(AnchoredPicker.Section("Run mode", modeRows))
         sections.add(AnchoredPicker.Section("More", voiceRows))
 
