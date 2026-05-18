@@ -25,6 +25,7 @@ import android.provider.Settings
 import android.text.method.ScrollingMovementMethod
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -370,9 +371,18 @@ class OverlayController(
         val composer = buildComposer(palette, input)
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
             setPadding(0, dp(12), 0, 0)
             background = recessedPanelDrawable(palette)
             elevation = dp(18).toFloat()
+            setOnKeyListener { _, keyCode, event ->
+                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                    dismissPanel()
+                    true
+                } else {
+                    false
+                }
+            }
             addView(voice)
             addView(historyScroll, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -394,7 +404,7 @@ class OverlayController(
         }
 
         val display = context.resources.displayMetrics
-        val topGap = dp(70)
+        val topGap = dp(92)
         val params = overlayParams(
             width = display.widthPixels,
             height = display.heightPixels - topGap,
@@ -426,6 +436,7 @@ class OverlayController(
 
         windowManager.addView(panel, params)
         panel.viewTreeObserver.addOnGlobalLayoutListener { positionComposerAboveKeyboard(panel) }
+        panel.requestFocus()
         panelView = panel
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
@@ -433,7 +444,15 @@ class OverlayController(
     }
 
     private fun buildComposerInput(palette: OverlayPalette): EditText {
-        return EditText(context).apply {
+        return object : EditText(context) {
+            override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                    dismissPanel()
+                    return true
+                }
+                return super.onKeyPreIme(keyCode, event)
+            }
+        }.apply {
             hint = "Message OpenClaw"
             minLines = 2
             maxLines = 4
@@ -452,30 +471,30 @@ class OverlayController(
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), 0, dp(10), dp(9))
+            setPadding(dp(8), 0, dp(8), dp(8))
         }
 
         controls.addView(iconButton(
             palette = palette,
             drawableRes = R.drawable.ic_plus,
             contentDescription = "Open chat controls"
-        ) { toggleControlsSheet() }, LinearLayout.LayoutParams(dp(32), dp(32)).apply { rightMargin = dp(6) })
+        ) { toggleControlsSheet() }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(5) })
 
         modelButton = compactPill(palette, "Model", R.drawable.ic_model).apply {
             setOnClickListener { showModelChoices() }
         }
-        controls.addView(modelButton, LinearLayout.LayoutParams(dp(88), dp(32)).apply { rightMargin = dp(6) })
+        controls.addView(modelButton, LinearLayout.LayoutParams(dp(84), dp(28)).apply { rightMargin = dp(5) })
 
         reasoningButton = compactPill(palette, "Reason", R.drawable.ic_reasoning).apply {
             setOnClickListener { cycleReasoningChoice() }
         }
-        controls.addView(reasoningButton, LinearLayout.LayoutParams(dp(74), dp(32)).apply { rightMargin = dp(6) })
+        controls.addView(reasoningButton, LinearLayout.LayoutParams(dp(68), dp(28)).apply { rightMargin = dp(5) })
 
         contextUsageView = ContextUsageView(context).apply {
             bind(palette, lastChatState.usage.contextRatio)
             setOnClickListener { showUsageControls() }
         }
-        controls.addView(contextUsageView, LinearLayout.LayoutParams(dp(32), dp(32)).apply { rightMargin = dp(6) })
+        controls.addView(contextUsageView, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(5) })
 
         controls.addView(Space(context), LinearLayout.LayoutParams(0, 1, 1f))
 
@@ -490,7 +509,7 @@ class OverlayController(
                     onStartTranscription()
                 }
         }
-        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(dp(32), dp(32)).apply { rightMargin = dp(8) })
+        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(7) })
 
         transcriptionCancelButton = Button(context).apply {
             text = "Cancel"
@@ -502,7 +521,7 @@ class OverlayController(
             backgroundTintList = null
             setOnClickListener { onCancelTranscription() }
         }
-        controls.addView(transcriptionCancelButton, LinearLayout.LayoutParams(dp(64), dp(32)).apply { rightMargin = dp(6) })
+        controls.addView(transcriptionCancelButton, LinearLayout.LayoutParams(dp(58), dp(28)).apply { rightMargin = dp(5) })
 
         sendStopButton = iconButton(
             palette = palette,
@@ -522,7 +541,7 @@ class OverlayController(
                     }
                 }
         }
-        controls.addView(sendStopButton, LinearLayout.LayoutParams(dp(36), dp(36)))
+        controls.addView(sendStopButton, LinearLayout.LayoutParams(dp(32), dp(32)))
 
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -552,8 +571,12 @@ class OverlayController(
             backgroundTintList = null
             setColorFilter(if (accent) Color.WHITE else palette.primaryText)
             this.contentDescription = contentDescription
-            scaleType = ImageView.ScaleType.CENTER
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            minimumWidth = 0
+            minimumHeight = 0
+            setMinimumWidth(0)
+            setMinimumHeight(0)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
             setOnClickListener { onClick() }
         }
     }
@@ -561,7 +584,7 @@ class OverlayController(
     private fun compactPill(palette: OverlayPalette, label: String, iconRes: Int): TextView {
         return TextView(context).apply {
             text = label
-            textSize = 11f
+            textSize = 9.5f
             gravity = Gravity.CENTER
             setSingleLine(true)
             setTextColor(palette.primaryText)
@@ -570,9 +593,9 @@ class OverlayController(
             minWidth = 0
             minHeight = 0
             includeFontPadding = false
-            setPadding(dp(8), 0, dp(7), 0)
+            setPadding(dp(6), 0, dp(5), 0)
             setCompoundDrawablesWithIntrinsicBounds(iconRes, 0, R.drawable.ic_chevron_down, 0)
-            compoundDrawablePadding = dp(3)
+            compoundDrawablePadding = dp(2)
         }
     }
 
