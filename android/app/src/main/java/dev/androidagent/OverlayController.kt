@@ -47,6 +47,7 @@ import dev.androidagent.ui.AnchoredPicker
 import dev.androidagent.ui.DesignTokens
 import dev.androidagent.ui.Drawables
 import dev.androidagent.ui.MarkdownRenderer
+import dev.androidagent.ui.StatusUpdateView
 import dev.androidagent.ui.ThemeTokens
 import dev.androidagent.ui.Typography
 import org.json.JSONObject
@@ -93,7 +94,7 @@ class OverlayController(
     private var isDismissAnimating = false
     private var confirmationView: View? = null
     private var confirmationScrimView: View? = null
-    private var statusText: TextView? = null
+    private var statusText: StatusUpdateView? = null
     private var voiceSurface: LinearLayout? = null
     private var voiceStatusText: TextView? = null
     private var voiceTranscriptText: TextView? = null
@@ -245,7 +246,7 @@ class OverlayController(
     }
 
     fun setStatus(text: String) {
-        statusText?.text = text
+        statusText?.setText(text)
     }
 
     fun setVoiceState(state: VoiceRuntimeState) {
@@ -419,10 +420,9 @@ class OverlayController(
             addView(history)
         }
         historyScrollView = historyScroll
-        statusText = TextView(context).apply {
-            text = lastChatState.status ?: "OpenClaw chat ready."
-            Typography.applyCaption(this, tokens, emphasis = false)
-            setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.xs), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.xs))
+        statusText = StatusUpdateView(context, tokens).apply {
+            setText(lastChatState.status ?: "OpenClaw chat ready.")
+            setActive(lastChatState.isRunning)
         }
         val voice = buildVoiceSurface(tokens)
         val composer = buildComposer(tokens, input)
@@ -1165,6 +1165,10 @@ class OverlayController(
         contextUsageView?.bind(tokens, state.usage.contextRatio)
         modelTitleSubtext?.text = state.selectedModel?.let { modelDisplayLabel(it) }
             ?: state.status ?: "Ready"
+        statusText?.let { sv ->
+            state.status?.let { sv.setText(it) }
+            sv.setActive(state.isRunning)
+        }
         renderTimeline(state)
     }
 
