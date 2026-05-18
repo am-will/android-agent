@@ -25,7 +25,7 @@ const chatBridge = new OpenClawChatBridge(config, hub, dispatcher, audit);
 const realtimeClient = new OpenAiRealtimeClient(config);
 const webSearchClient = new OpenAiWebSearchClient(config);
 const realtimeTaskManager = new RealtimeTaskManager({
-  dispatcher,
+  taskDelegate: chatBridge,
   audit,
   sendRealtime,
   webSearch: webSearchClient,

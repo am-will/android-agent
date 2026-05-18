@@ -37,6 +37,26 @@ class FakeDispatcher {
   }
 }
 
+class FakeTaskDelegate {
+  readonly requests: Array<{ text: string; taskKind?: string; callId?: string }> = [];
+  readonly stopReasons: string[] = [];
+  readonly steers: Array<{ guidance: string; taskKind?: string; callId?: string }> = [];
+  results: Array<Promise<AgentRunResult>> = [];
+
+  async handleRealtimeRequest(request: { text: string }, options: { taskKind?: string; callId?: string }): Promise<AgentRunResult> {
+    this.requests.push({ text: request.text, taskKind: options.taskKind, callId: options.callId });
+    return await (this.results.shift() ?? Promise.resolve({ finalMessage: `chat done ${request.text}` }));
+  }
+
+  async stopRealtimeTurn(_deviceId: string, reason?: string): Promise<void> {
+    this.stopReasons.push(reason ?? "");
+  }
+
+  async steerRealtimeTurn(_deviceId: string, guidance: string, options: { taskKind?: string; callId?: string }): Promise<void> {
+    this.steers.push({ guidance, taskKind: options.taskKind, callId: options.callId });
+  }
+}
+
 function toolCall(callId: string, instruction: string, extraArgs: Record<string, unknown> = {}): RealtimeToolCallMessage {
   return {
     type: "realtime.tool_call",
@@ -90,6 +110,17 @@ function createHarnessWithSearch(output = "search result") {
     getRealtimeLocation: () => ({ latitude: 31.7619, longitude: -106.485, accuracyMeters: 100 })
   });
   return { dispatcher, manager, messages, queries, locations };
+}
+
+function createHarnessWithDelegate(options: { taskTimeoutMs?: number } = {}) {
+  const delegate = new FakeTaskDelegate();
+  const messages: RealtimeOutboundMessage[] = [];
+  const manager = new RealtimeTaskManager({
+    taskDelegate: delegate,
+    sendRealtime: (_deviceId, message) => messages.push(message),
+    taskTimeoutMs: options.taskTimeoutMs
+  });
+  return { delegate, manager, messages };
 }
 
 function results(messages: RealtimeOutboundMessage[]) {
@@ -244,4 +275,36 @@ test("delegate_openclaw_task routes general realtime work to dispatcher", async 
 
   assert.deepEqual(dispatcher.requests, [{ text: "Summarize my inbox", taskKind: "general" }]);
   assert.equal(results(messages).find((message) => message.callId === "call_general")?.output, "done Summarize my inbox");
+});
+
+test("task delegate receives visible realtime OpenClaw and phone requests", async () => {
+  const { delegate, manager, messages } = createHarnessWithDelegate();
+
+  await manager.handleToolCall(namedToolCall("call_general", "delegate_openclaw_task", { instruction: "Summarize my inbox" }));
+  await manager.handleToolCall(toolCall("call_phone", "Open Settings"));
+  await waitFor(() => results(messages).length === 2);
+
+  assert.deepEqual(delegate.requests, [
+    { text: "Summarize my inbox", taskKind: "general", callId: "call_general" },
+    { text: "Open Settings", taskKind: "phone", callId: "call_phone" }
+  ]);
+  assert.equal(results(messages).find((message) => message.callId === "call_general")?.output, "chat done Summarize my inbox");
+  assert.equal(results(messages).find((message) => message.callId === "call_phone")?.output, "chat done Open Settings");
+});
+
+test("task delegate receives visible steer and stop requests", async () => {
+  const first = new Deferred<AgentRunResult>();
+  const { delegate, manager, messages } = createHarnessWithDelegate();
+  delegate.results = [first.promise];
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await manager.handleToolCall(namedToolCall("call_steer", "steer_phone_task", { guidance: "Actually open Bluetooth settings." }));
+  await manager.handleToolCall(namedToolCall("call_stop", "stop_phone_task", { reason: "User said stop" }));
+
+  assert.deepEqual(delegate.steers, [{ guidance: "Actually open Bluetooth settings.", taskKind: "phone", callId: "call_steer" }]);
+  assert.deepEqual(delegate.stopReasons, ["User said stop"]);
+  assert.equal(results(messages).find((message) => message.callId === "call_steer")?.status, "completed");
+  assert.equal(results(messages).find((message) => message.callId === "call_stop")?.status, "completed");
+
+  first.resolve({ finalMessage: "Settings opened late" });
 });

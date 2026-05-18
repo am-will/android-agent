@@ -1,9 +1,17 @@
+import type { AgentRunResult, AgentTaskKind } from "../dispatcher/AgentClient.js";
 import type { Dispatcher } from "../dispatcher/dispatcher.js";
-import type { PhoneLocation, RealtimeOutboundMessage, RealtimeToolCallMessage, RealtimeToolResultMessage } from "../protocol/messages.js";
+import type { PhoneLocation, RealtimeOutboundMessage, RealtimeToolCallMessage, RealtimeToolResultMessage, UserRequestMessage } from "../protocol/messages.js";
 import type { AuditLog } from "./AuditLog.js";
 
+interface RealtimeTaskDelegate {
+  handleRealtimeRequest(request: UserRequestMessage, options: { taskKind: AgentTaskKind; callId: string }): Promise<AgentRunResult>;
+  stopRealtimeTurn(deviceId: string, reason?: string): Promise<void>;
+  steerRealtimeTurn(deviceId: string, guidance: string, options: { taskKind: AgentTaskKind; callId: string }): Promise<void>;
+}
+
 interface RealtimeTaskManagerOptions {
-  dispatcher: Pick<Dispatcher, "handleUserRequest" | "stopActiveTurn" | "steerActiveTurn">;
+  dispatcher?: Pick<Dispatcher, "handleUserRequest" | "stopActiveTurn" | "steerActiveTurn">;
+  taskDelegate?: RealtimeTaskDelegate;
   sendRealtime: (deviceId: string, message: RealtimeOutboundMessage) => void;
   webSearch?: {
     search(options: { deviceId: string; query: string; apiKey?: string; location?: PhoneLocation }): Promise<string>;
@@ -170,7 +178,12 @@ export class RealtimeTaskManager {
     }
 
     try {
-      await this.options.dispatcher.steerActiveTurn(message.deviceId, guidance);
+      await this.steerActiveTurn(
+        message.deviceId,
+        guidance,
+        message.name === "steer_openclaw_task" ? "general" : "phone",
+        message.callId
+      );
       this.sendResult(message.deviceId, {
         callId: message.callId,
         ok: true,
@@ -247,7 +260,7 @@ export class RealtimeTaskManager {
   async cancelDevice(deviceId: string, reason = "Realtime phone task cancelled"): Promise<void> {
     const state = this.states.get(deviceId);
     if (!state?.active && (!state || state.queue.length === 0)) {
-      await this.options.dispatcher.stopActiveTurn(deviceId, reason);
+      await this.stopActiveTurn(deviceId, reason);
       return;
     }
 
@@ -263,7 +276,7 @@ export class RealtimeTaskManager {
     const active = state.active;
     if (active) {
       state.active = undefined;
-      await this.options.dispatcher.stopActiveTurn(deviceId, reason);
+      await this.stopActiveTurn(deviceId, reason);
       this.sendResult(deviceId, {
         callId: active.callId,
         ok: false,
@@ -297,7 +310,7 @@ export class RealtimeTaskManager {
       return;
     }
     state.active = undefined;
-    await this.options.dispatcher.stopActiveTurn(nextTask.deviceId, `Interrupted by newer realtime ${nextTask.kind === "phone" ? "phone" : "Open Claw"} task`);
+    await this.stopActiveTurn(nextTask.deviceId, `Interrupted by newer realtime ${nextTask.kind === "phone" ? "phone" : "Open Claw"} task`);
     this.sendResult(nextTask.deviceId, {
       callId: active.callId,
       ok: false,
@@ -330,16 +343,12 @@ export class RealtimeTaskManager {
 
     try {
       const result = await this.withTimeout(
-        this.options.dispatcher.handleUserRequest({
-          type: "user_request",
-          deviceId: task.deviceId,
-          inputType: "text",
-          text: task.instruction
-        }, {
-          taskKind: task.kind
-        }),
+        this.handleUserRequest(task),
         this.taskTimeoutMs
       );
+      if (state.completedResults.has(task.callId)) {
+        return;
+      }
       const error = result.error?.trim();
       this.sendResult(task.deviceId, {
         callId: task.callId,
@@ -349,9 +358,19 @@ export class RealtimeTaskManager {
         error
       });
     } catch (error) {
+      if (state.completedResults.has(task.callId)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       if (message === "realtime task timeout") {
-        await this.options.dispatcher.stopActiveTurn(task.deviceId, `Realtime ${task.kind === "phone" ? "phone" : "Open Claw"} task timed out after ${this.taskTimeoutMs}ms`);
+        try {
+          await this.stopActiveTurn(task.deviceId, `Realtime ${task.kind === "phone" ? "phone" : "Open Claw"} task timed out after ${this.taskTimeoutMs}ms`);
+        } catch (stopError) {
+          this.options.audit?.record("realtime_task_stop_failed", task.deviceId, {
+            callId: task.callId,
+            error: stopError instanceof Error ? stopError.message : String(stopError)
+          });
+        }
         this.sendResult(task.deviceId, {
           callId: task.callId,
           ok: false,
@@ -372,6 +391,49 @@ export class RealtimeTaskManager {
       }
       this.processNext(task.deviceId);
     }
+  }
+
+  private async handleUserRequest(task: QueuedTask): Promise<AgentRunResult> {
+    const request: UserRequestMessage = {
+      type: "user_request",
+      deviceId: task.deviceId,
+      inputType: "text",
+      text: task.instruction
+    };
+    if (this.options.taskDelegate) {
+      return await this.options.taskDelegate.handleRealtimeRequest(request, {
+        taskKind: task.kind,
+        callId: task.callId
+      });
+    }
+    if (!this.options.dispatcher) {
+      throw new Error("Realtime task manager is missing a task delegate");
+    }
+    return await this.options.dispatcher.handleUserRequest(request, {
+      taskKind: task.kind
+    });
+  }
+
+  private async stopActiveTurn(deviceId: string, reason: string): Promise<void> {
+    if (this.options.taskDelegate) {
+      await this.options.taskDelegate.stopRealtimeTurn(deviceId, reason);
+      return;
+    }
+    if (!this.options.dispatcher) {
+      throw new Error("Realtime task manager is missing a task delegate");
+    }
+    await this.options.dispatcher.stopActiveTurn(deviceId, reason);
+  }
+
+  private async steerActiveTurn(deviceId: string, guidance: string, taskKind: AgentTaskKind, callId: string): Promise<void> {
+    if (this.options.taskDelegate) {
+      await this.options.taskDelegate.steerRealtimeTurn(deviceId, guidance, { taskKind, callId });
+      return;
+    }
+    if (!this.options.dispatcher) {
+      throw new Error("Realtime task manager is missing a task delegate");
+    }
+    await this.options.dispatcher.steerActiveTurn(deviceId, guidance);
   }
 
   private validate(message: RealtimeToolCallMessage): { ok: true; instruction: string; urgency: "normal" | "interrupt"; kind: "general" | "phone" } | { ok: false; error: string } {
