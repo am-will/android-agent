@@ -989,16 +989,13 @@ class OverlayController(
             onSelect = { onNewChatSession(); setStatus("Started a new chat session") }
         ))
         if (sessions.isNotEmpty()) {
-            sessions.take(6).forEach { session ->
-                val label = session.displayName ?: session.label ?: session.sessionId ?: session.key.substringAfterLast(":")
-                sessionRows.add(AnchoredPicker.Row(
-                    label = label.take(40),
-                    sublabel = session.model,
-                    iconRes = R.drawable.ic_session,
-                    selected = session.key == lastChatState.sessionKey,
-                    onSelect = { onSelectChatSession(session.key) }
-                ))
-            }
+            val sessionCount = sessions.size.coerceAtMost(20)
+            sessionRows.add(AnchoredPicker.Row(
+                label = "Previous chats",
+                sublabel = "Last $sessionCount",
+                iconRes = R.drawable.ic_session,
+                onSelect = { showSessionsMenu() }
+            ))
         }
 
         val toolRows = mutableListOf<AnchoredPicker.Row>()
@@ -1084,6 +1081,26 @@ class OverlayController(
         sections.add(AnchoredPicker.Section("More", voiceRows))
 
         showAnchoredPicker(plusAnchor, "Add", sections)
+    }
+
+    private fun showSessionsMenu() {
+        val anchor = plusButton ?: panelHost ?: return
+        val sessions = lastChatState.sessions
+        if (sessions.isEmpty()) {
+            setStatus("No previous chats yet.")
+            return
+        }
+        val rows = sessions.take(20).map { session ->
+            val label = session.displayName ?: session.label ?: session.sessionId ?: session.key.substringAfterLast(":")
+            AnchoredPicker.Row(
+                label = label.take(40),
+                sublabel = session.model,
+                iconRes = R.drawable.ic_session,
+                selected = session.key == lastChatState.sessionKey,
+                onSelect = { onSelectChatSession(session.key) }
+            )
+        }
+        showAnchoredPicker(anchor, "Previous chats", listOf(AnchoredPicker.Section(null, rows)))
     }
 
     private fun showUsageControls() {
