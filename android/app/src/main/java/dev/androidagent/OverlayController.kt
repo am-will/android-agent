@@ -39,6 +39,7 @@ import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
 import android.widget.FrameLayout
+import dev.androidagent.chat.ChatModelOption
 import dev.androidagent.chat.ChatTimelineKind
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatTimelineItem
@@ -848,17 +849,18 @@ class OverlayController(
 
     private fun showModelChoices() {
         val anchor = modelButton ?: return
-        val models = lastChatState.models
-        if (models.isEmpty()) {
-            setStatus("No Gateway models loaded yet.")
+        val merged = mergeModelOptions(lastChatState.models)
+        if (merged.isEmpty()) {
+            setStatus("No models available.")
             return
         }
-        val rows = models.map { model ->
+        val selectedId = lastChatState.selectedModel ?: ""
+        val rows = merged.map { model ->
             AnchoredPicker.Row(
                 label = model.label,
                 sublabel = model.provider?.takeIf { it.isNotBlank() },
                 iconRes = R.drawable.ic_model,
-                selected = model.id == (lastChatState.selectedModel ?: ""),
+                selected = model.id == selectedId,
                 enabled = model.available != false,
                 onSelect = {
                     onSetChatModel(model.id)
@@ -867,6 +869,23 @@ class OverlayController(
             )
         }
         showAnchoredPicker(anchor, "Model", listOf(AnchoredPicker.Section(null, rows)))
+    }
+
+    private fun mergeModelOptions(gatewayModels: List<ChatModelOption>): List<ChatModelOption> {
+        val byId = linkedMapOf<String, ChatModelOption>()
+        AgentModelOptions.models.forEach { local ->
+            byId[local.id] = ChatModelOption(
+                id = local.id,
+                label = local.label,
+                provider = null,
+                contextWindow = null,
+                available = true
+            )
+        }
+        gatewayModels.forEach { remote ->
+            byId[remote.id] = remote
+        }
+        return byId.values.toList()
     }
 
     private fun showReasoningChoices() {
