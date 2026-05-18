@@ -79,7 +79,9 @@ class OverlayController(
     private var lastBubbleX: Int? = null
     private var lastBubbleY: Int? = null
     private var panelView: View? = null
+    private var panelParams: WindowManager.LayoutParams? = null
     private var panelScrimView: View? = null
+    private var panelScrimParams: WindowManager.LayoutParams? = null
     private var trashTargetView: ImageView? = null
     private var trashTargetBounds = Rect()
     private var isBubbleOverTrashTarget = false
@@ -110,6 +112,10 @@ class OverlayController(
     private var lastTranscriptionState = VoiceTranscriptionState()
     private var automationSuppressionDepth = 0
     private var restoreBubbleAfterAutomation = false
+    private var restorePanelAfterAutomation = false
+    private var restorePanelScrimAfterAutomation = false
+    private var restorePanelFocusAfterAutomation = false
+    private var restoreComposerFocusAfterAutomation = false
 
     private data class OverlayPalette(
         val surface: Int,
@@ -182,15 +188,20 @@ class OverlayController(
         }
 
         restoreBubbleAfterAutomation = bubbleView != null
+        restorePanelAfterAutomation = isOverlayAttached(panelView)
+        restorePanelScrimAfterAutomation = isOverlayAttached(panelScrimView)
+        restorePanelFocusAfterAutomation = panelView?.hasFocus() == true
+        restoreComposerFocusAfterAutomation = composerInput?.hasFocus() == true
         rememberBubblePosition()
         // Automation suppression only clears our chrome; it must not stop turns,
-        // hang up voice, or dismiss the foreground service.
-        dismissPanel(cancelTranscription = false)
+        // hang up voice, clear the chat modal's state, or dismiss the foreground service.
+        detachOverlayView(panelView)
+        detachOverlayView(panelScrimView)
         stopBubblePulse()
         bubbleView?.let {
             it.animate().cancel()
             it.animate().setListener(null)
-            windowManager.removeView(it)
+            detachOverlayView(it)
         }
         bubbleView = null
         bubbleParams = null
@@ -207,7 +218,23 @@ class OverlayController(
         }
 
         val shouldRestoreBubble = restoreBubbleAfterAutomation
+        val shouldRestorePanel = restorePanelAfterAutomation
+        val shouldRestorePanelScrim = restorePanelScrimAfterAutomation
+        val shouldRestorePanelFocus = restorePanelFocusAfterAutomation
+        val shouldRestoreComposerFocus = restoreComposerFocusAfterAutomation
         restoreBubbleAfterAutomation = false
+        restorePanelAfterAutomation = false
+        restorePanelScrimAfterAutomation = false
+        restorePanelFocusAfterAutomation = false
+        restoreComposerFocusAfterAutomation = false
+        if (Settings.canDrawOverlays(context)) {
+            restoreSuppressedPanel(
+                restoreScrim = shouldRestorePanelScrim,
+                restorePanel = shouldRestorePanel,
+                restorePanelFocus = shouldRestorePanelFocus,
+                restoreComposerFocus = shouldRestoreComposerFocus
+            )
+        }
         if (shouldRestoreBubble) {
             show()
         }
@@ -458,11 +485,13 @@ class OverlayController(
         }
         windowManager.addView(scrim, scrimParams)
         panelScrimView = scrim
+        panelScrimParams = scrimParams
 
         windowManager.addView(panel, params)
         panel.viewTreeObserver.addOnGlobalLayoutListener { positionPanelAboveKeyboard(panel, params) }
         panel.requestFocus()
         panelView = panel
+        panelParams = params
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
         renderTranscriptionState(lastTranscriptionState)
@@ -927,10 +956,12 @@ class OverlayController(
         if (cancelTranscription && lastTranscriptionState.isRecording) {
             onCancelTranscription()
         }
-        panelView?.let { windowManager.removeView(it) }
-        panelScrimView?.let { windowManager.removeView(it) }
+        detachOverlayView(panelView)
+        detachOverlayView(panelScrimView)
         panelView = null
+        panelParams = null
         panelScrimView = null
+        panelScrimParams = null
         composerInput = null
         transcriptionMicButton = null
         transcriptionCancelButton = null
@@ -1244,7 +1275,7 @@ class OverlayController(
         trashTargetView?.let {
             it.animate().cancel()
             it.animate().setListener(null)
-            windowManager.removeView(it)
+            detachOverlayView(it)
         }
         trashTargetView = null
         trashTargetBounds = Rect()
@@ -1421,6 +1452,46 @@ class OverlayController(
             lastBubbleX = it.x
             lastBubbleY = it.y
         }
+    }
+
+    private fun restoreSuppressedPanel(
+        restoreScrim: Boolean,
+        restorePanel: Boolean,
+        restorePanelFocus: Boolean,
+        restoreComposerFocus: Boolean
+    ) {
+        val scrim = panelScrimView
+        val scrimParams = panelScrimParams
+        if (restoreScrim && scrim != null && scrimParams != null && !isOverlayAttached(scrim)) {
+            windowManager.addView(scrim, scrimParams)
+        }
+
+        val panel = panelView
+        val params = panelParams
+        if (restorePanel && panel != null && params != null && !isOverlayAttached(panel)) {
+            windowManager.addView(panel, params)
+            when {
+                restoreComposerFocus -> composerInput?.post {
+                    composerInput?.requestFocus()
+                    positionPanelAboveKeyboard(panel, params)
+                }
+                restorePanelFocus -> panel.post { panel.requestFocus() }
+            }
+        }
+    }
+
+    private fun detachOverlayView(view: View?) {
+        view ?: return
+        view.animate().cancel()
+        view.animate().setListener(null)
+        if (isOverlayAttached(view)) {
+            runCatching { windowManager.removeViewImmediate(view) }
+                .recoverCatching { windowManager.removeView(view) }
+        }
+    }
+
+    private fun isOverlayAttached(view: View?): Boolean {
+        return view?.isAttachedToWindow == true || view?.parent != null
     }
 
     companion object {

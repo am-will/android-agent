@@ -47,7 +47,7 @@ class AccessibilityCommandExecutor(
 
         return when (command) {
             "observe_screen" -> CommandResult(true, observer.observe(requireService(service)))
-            "open_app" -> {
+            "open_app" -> withAgentChromeSuppressed {
                 val targetPackage = openApp(args)
                 waitMs(1500)
                 val observation = service?.let { observer.observe(it) }
@@ -61,58 +61,72 @@ class AccessibilityCommandExecutor(
             }
             "tap_node" -> {
                 service ?: return accessibilityMissing()
-                val node = requireNode(args.getString("nodeId"))
-                tapNode(service, node)
-                waitMs(350)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    val node = requireNode(args.getString("nodeId"))
+                    tapNode(service, node)
+                    waitMs(350)
+                    CommandResult(true, observer.observe(service))
+                }
             }
             "tap_xy" -> {
                 service ?: return accessibilityMissing()
-                tap(service, args.getDouble("x").toFloat(), args.getDouble("y").toFloat())
-                waitMs(350)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    tap(service, args.getDouble("x").toFloat(), args.getDouble("y").toFloat())
+                    waitMs(350)
+                    CommandResult(true, observer.observe(service))
+                }
             }
             "tap_normalized" -> {
                 service ?: return accessibilityMissing()
-                tapNormalized(service, args.getDouble("xPct").toFloat(), args.getDouble("yPct").toFloat())
-                waitMs(350)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    tapNormalized(service, args.getDouble("xPct").toFloat(), args.getDouble("yPct").toFloat())
+                    waitMs(350)
+                    CommandResult(true, observer.observe(service))
+                }
             }
             "long_press_node" -> {
                 service ?: return accessibilityMissing()
-                val node = requireNode(args.getString("nodeId"))
-                longPressNode(service, node)
-                waitMs(400)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    val node = requireNode(args.getString("nodeId"))
+                    longPressNode(service, node)
+                    waitMs(400)
+                    CommandResult(true, observer.observe(service))
+                }
             }
             "type_text" -> {
                 service ?: return accessibilityMissing()
-                typeText(service, args.getString("text"))
-                waitMs(300)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    typeText(service, args.getString("text"))
+                    waitMs(300)
+                    CommandResult(true, observer.observe(service))
+                }
             }
             "scroll" -> {
                 service ?: return accessibilityMissing()
-                scroll(service, args.optString("direction", "down"))
-                waitMs(400)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    scroll(service, args.optString("direction", "down"))
+                    waitMs(400)
+                    CommandResult(true, observer.observe(service))
+                }
             }
             "swipe" -> {
                 service ?: return accessibilityMissing()
-                swipe(
-                    service,
-                    args.getDouble("startX").toFloat(),
-                    args.getDouble("startY").toFloat(),
-                    args.getDouble("endX").toFloat(),
-                    args.getDouble("endY").toFloat(),
-                    args.optLong("durationMs", 350L)
-                )
-                waitMs(350)
-                CommandResult(true, observer.observe(service))
+                withAgentChromeSuppressed {
+                    swipe(
+                        service,
+                        args.getDouble("startX").toFloat(),
+                        args.getDouble("startY").toFloat(),
+                        args.getDouble("endX").toFloat(),
+                        args.getDouble("endY").toFloat(),
+                        args.optLong("durationMs", 350L)
+                    )
+                    waitMs(350)
+                    CommandResult(true, observer.observe(service))
+                }
             }
-            "press_back" -> global(requireService(service), AccessibilityService.GLOBAL_ACTION_BACK)
-            "press_home" -> global(requireService(service), AccessibilityService.GLOBAL_ACTION_HOME)
-            "open_recents" -> global(requireService(service), AccessibilityService.GLOBAL_ACTION_RECENTS)
+            "press_back" -> withAgentChromeSuppressed { global(requireService(service), AccessibilityService.GLOBAL_ACTION_BACK) }
+            "press_home" -> withAgentChromeSuppressed { global(requireService(service), AccessibilityService.GLOBAL_ACTION_HOME) }
+            "open_recents" -> withAgentChromeSuppressed { global(requireService(service), AccessibilityService.GLOBAL_ACTION_RECENTS) }
             "take_screenshot" -> takeScreenshot(requireService(service))
             "ask_user_confirmation" -> askUserConfirmation(service, args)
             "wait" -> {
