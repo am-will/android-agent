@@ -46,6 +46,9 @@ class VoiceTranscriptionManager(
     private var silenceStopRequested = false
 
     @Volatile
+    private var heardSpeechDuringSession = false
+
+    @Volatile
     private var recording = false
 
     fun currentState(): VoiceTranscriptionState = synchronized(stateLock) { state }
@@ -96,6 +99,7 @@ class VoiceTranscriptionManager(
         synchronized(buffers) { buffers.clear() }
         audioRecord = recorder
         silenceStopRequested = false
+        heardSpeechDuringSession = false
         recording = true
 
         runCatching { recorder.startRecording() }
@@ -125,14 +129,16 @@ class VoiceTranscriptionManager(
 
     suspend fun stopAndTranscribe(openAiApiKey: String): String? {
         val samples = stopRecordingAndCollect()
+        val heardSpeech = heardSpeechDuringSession
+        heardSpeechDuringSession = false
         updateState(currentState().copy(isRecording = false, audioLevel = 0f))
 
-        if (samples.isEmpty()) {
-            updateState(VoiceTranscriptionState(error = "No audio was recorded."))
+        if (samples.isEmpty() || !heardSpeech) {
+            updateState(VoiceTranscriptionState())
             return null
         }
         if (TranscriptionAudio.isTooShort(samples.size, deviceSampleRate)) {
-            updateState(VoiceTranscriptionState(error = "Recording too short."))
+            updateState(VoiceTranscriptionState())
             return null
         }
 
@@ -149,18 +155,39 @@ class VoiceTranscriptionManager(
 
         updateState(VoiceTranscriptionState(isTranscribing = true))
         return try {
-            val text = withContext(Dispatchers.IO) { transcribeOpenAi(wav, token) }
-            if (text.isNullOrBlank()) {
-                updateState(VoiceTranscriptionState(error = "Transcription result was empty."))
+            val raw = withContext(Dispatchers.IO) { transcribeOpenAi(wav, token) }
+            val clean = sanitizeTranscript(raw)
+            if (clean.isNullOrBlank()) {
+                updateState(VoiceTranscriptionState())
                 null
             } else {
                 updateState(VoiceTranscriptionState())
-                text
+                clean
             }
         } catch (error: Exception) {
             updateState(VoiceTranscriptionState(error = error.message ?: error.toString()))
             null
         }
+    }
+
+    private fun sanitizeTranscript(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        var text = raw.trim()
+        text = text.replace(Regex("\\([^)]{0,40}\\)"), "")
+        text = text.replace(Regex("\\[[^\\]]{0,40}\\]"), "")
+        text = text.replace(Regex("\\s+"), " ").trim()
+        val lower = text.lowercase()
+        val silenceWords = setOf(
+            "", ".", "...", "…",
+            "you", "you.", "you you", "you you you",
+            "thanks", "thank you", "thank you.",
+            "silence", "silent",
+            "blank audio", "blank_audio", "no audio",
+            "music", "soft music", "quiet music", "background music"
+        )
+        if (lower in silenceWords) return null
+        if (text.all { !it.isLetterOrDigit() }) return null
+        return text
     }
 
     fun cancelRecording() {
@@ -192,6 +219,7 @@ class VoiceTranscriptionManager(
             val now = System.currentTimeMillis()
             if (level >= SPEECH_LEVEL_THRESHOLD) {
                 heardSpeech = true
+                heardSpeechDuringSession = true
                 lastSpeechAt = now
             } else if (heardSpeech && now - lastSpeechAt >= SILENCE_AUTO_STOP_MS && !silenceStopRequested) {
                 silenceStopRequested = true

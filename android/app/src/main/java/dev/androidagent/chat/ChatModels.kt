@@ -101,13 +101,13 @@ data class ChatState(
 
     companion object {
         val defaultReasoningOptions = listOf(
-            ChatReasoningOption("off", "off"),
-            ChatReasoningOption("minimal", "minimal"),
             ChatReasoningOption("low", "low"),
             ChatReasoningOption("medium", "medium"),
             ChatReasoningOption("high", "high"),
             ChatReasoningOption("xhigh", "xhigh")
         )
+
+        val allowedReasoningIds = setOf("low", "medium", "high", "xhigh")
     }
 }
 
@@ -322,7 +322,10 @@ object ChatStateReducer {
     }
 
     private fun reduceModels(state: ChatState, message: JSONObject): ChatState {
-        val reasoning = parseReasoning(message.optJSONArray("reasoningOptions")).ifEmpty { state.reasoningOptions }
+        val incoming = parseReasoning(message.optJSONArray("reasoningOptions"))
+        val filtered = incoming.filter { it.id in ChatState.allowedReasoningIds }
+        val reasoning = (if (filtered.isNotEmpty()) filtered else state.reasoningOptions)
+            .ifEmpty { ChatState.defaultReasoningOptions }
         return state.copy(
             models = parseModels(message.optJSONArray("models")),
             reasoningOptions = reasoning,

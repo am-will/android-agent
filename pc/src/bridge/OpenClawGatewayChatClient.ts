@@ -617,6 +617,43 @@ export function mapGatewayChatEvent(
   if (!record || !sessionKey || !runId) {
     return undefined;
   }
+  const eventType = stringField(record, "type");
+  if (eventType === "assistant.delta") {
+    const data = asRecord(record.data);
+    return {
+      type: "chat.delta",
+      deviceId,
+      sessionKey,
+      runId,
+      delta: extractGatewayText(data?.delta ?? data?.text ?? record.data),
+      replace: false
+    };
+  }
+  if (eventType === "assistant.message") {
+    const data = asRecord(record.data);
+    const text = extractGatewayText(data?.message ?? data?.content ?? data?.text ?? record.data);
+    if (!text.trim()) {
+      return undefined;
+    }
+    return {
+      type: "chat.final",
+      deviceId,
+      sessionKey,
+      runId,
+      text,
+      usage: data?.usage
+    };
+  }
+  if (eventType === "run.failed" || eventType === "run.cancelled" || eventType === "run.timed_out") {
+    const data = asRecord(record.data);
+    return {
+      type: "chat.error",
+      deviceId,
+      sessionKey,
+      runId,
+      message: stringField(data, "message") ?? stringField(data, "error") ?? `OpenClaw ${eventType.replace("run.", "")}`
+    };
+  }
   const state = stringField(record, "state");
   if (state === "delta") {
     return {

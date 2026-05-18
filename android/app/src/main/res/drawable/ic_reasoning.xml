@@ -1,9 +1,21 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="16dp"
-    android:height="16dp"
+    android:width="18dp"
+    android:height="18dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- Top-down brain mark, matching the reference style. -->
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M13,2L5,13h6l-1,9l8,-12h-6z" />
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12,4.2C11.1,2.9 8.7,2.7 7.5,4.1C5.5,4.3 4,5.8 4.1,7.8C2.6,8.7 2.4,11 3.7,12.2C2.7,13.9 3.4,16.2 5.2,16.9C5.4,19 7.1,20.5 9.1,20.4C10.6,20.3 12,19.1 12,17.4V4.2ZM12,4.2C12.9,2.9 15.3,2.7 16.5,4.1C18.5,4.3 20,5.8 19.9,7.8C21.4,8.7 21.6,11 20.3,12.2C21.3,13.9 20.6,16.2 18.8,16.9C18.6,19 16.9,20.5 14.9,20.4C13.4,20.3 12,19.1 12,17.4V4.2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M8.2,5.5C9.2,5.7 9.9,6.2 10.3,7M5.8,8C7.3,7.9 8.7,8.9 8.9,10.4M5.1,12.8C5.8,14 7.1,14.5 8.5,14.1M7.2,16.2C8.5,16.1 9.6,16.9 9.9,18.2M10.3,11.8C9,11.9 8,12.7 7.8,14M15.8,5.5C14.8,5.7 14.1,6.2 13.7,7M18.2,8C16.7,7.9 15.3,8.9 15.1,10.4M18.9,12.8C18.2,14 16.9,14.5 15.5,14.1M16.8,16.2C15.5,16.1 14.4,16.9 14.1,18.2M13.7,11.8C15,11.9 16,12.7 16.2,14M10.6,9.4H12M13.4,9.4H12"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.6" />
 </vector>

@@ -19,6 +19,7 @@ import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatStateReducer
+import dev.androidagent.chat.ChatUsageSummary
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
 import dev.androidagent.voice.transcription.VoiceTranscriptionManager
@@ -39,6 +40,7 @@ class AgentForegroundService : Service() {
     private var lastNotificationText = DEFAULT_NOTIFICATION_TEXT
     private var isAgentTurnActive = false
     private var chatState = ChatState()
+    private var pendingNewChat = false
 
     override fun onCreate() {
         super.onCreate()
@@ -62,7 +64,7 @@ class AgentForegroundService : Service() {
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() },
             onSelectChatSession = { sessionKey -> webSocketClient?.sendChatSelectSession(sessionKey) },
-            onNewChatSession = { webSocketClient?.sendChatNewSession() },
+            onNewChatSession = { startNewChatFromUi() },
             onSetChatModel = { model -> webSocketClient?.sendChatSetModel(chatState.sessionKey, model) },
             onSetChatReasoning = { reasoning -> webSocketClient?.sendChatSetReasoning(chatState.sessionKey, reasoning) },
             onChatControlCommand = { command, args -> webSocketClient?.sendChatControlCommand(command, args) },
@@ -86,9 +88,16 @@ class AgentForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         connectWebSocket()
-        if (intent?.action == ACTION_STOP_TURN) {
-            requestStopTurn("Stopped from Android notification")
-            return START_STICKY
+        when (intent?.action) {
+            ACTION_STOP_TURN -> {
+                requestStopTurn("Stopped from Android notification")
+                return START_STICKY
+            }
+            ACTION_OPEN_CHAT -> {
+                overlayController?.show()
+                overlayController?.openPanel()
+                return START_STICKY
+            }
         }
         overlayController?.show()
         return START_STICKY
@@ -132,6 +141,9 @@ class AgentForegroundService : Service() {
 
     private fun submitChatText(text: String): Boolean {
         connectWebSocket()
+        if (text.trimStart().startsWith("/")) {
+            return submitSlashCommand(text)
+        }
         chatState = ChatStateReducer.localUserMessage(chatState, text)
         overlayController?.setChatState(chatState)
         val sent = webSocketClient?.sendChatMessage(
@@ -149,9 +161,65 @@ class AgentForegroundService : Service() {
         return sent
     }
 
+    private fun submitSlashCommand(text: String): Boolean {
+        val slashText = text.trim()
+        val command = slashText.removePrefix("/").substringBefore(' ').trim()
+        if (command.isBlank()) {
+            return false
+        }
+        if (command == "new") {
+            startNewChatFromUi()
+            return true
+        }
+
+        chatState = ChatStateReducer.localUserMessage(chatState, slashText).copy(
+            status = "Running $slashText"
+        )
+        overlayController?.setChatState(chatState)
+        webSocketClient?.sendChatControlCommand(slashText, JSONObject())
+        lastNotificationText = "Running $slashText"
+        isAgentTurnActive = command != "status"
+        updateNotification()
+        return true
+    }
+
+    private fun startNewChatFromUi() {
+        pendingNewChat = true
+        chatState = chatState.copy(
+            sessionKey = null,
+            sessionId = null,
+            activeRunId = null,
+            isRunning = false,
+            status = "Started a new chat",
+            error = null,
+            timeline = emptyList(),
+            usage = ChatUsageSummary()
+        )
+        overlayController?.setChatState(chatState)
+        webSocketClient?.sendChatNewSession()
+        lastNotificationText = "Started a new chat"
+        isAgentTurnActive = false
+        updateNotification()
+    }
+
     private fun handleChatMessage(message: JSONObject) {
         serviceScope.launch {
+            if (pendingNewChat && message.optString("type") == "chat.history") {
+                val incomingSessionKey = message.optString("sessionKey")
+                val activeSessionKey = chatState.sessionKey
+                if (activeSessionKey.isNullOrBlank() || incomingSessionKey != activeSessionKey) {
+                    return@launch
+                }
+            }
             chatState = ChatStateReducer.reduce(chatState, message)
+            if (
+                pendingNewChat &&
+                message.optString("type") == "chat.state" &&
+                !chatState.sessionKey.isNullOrBlank()
+            ) {
+                pendingNewChat = false
+                chatState = chatState.copy(timeline = emptyList(), usage = ChatUsageSummary())
+            }
             overlayController?.setChatState(chatState)
             chatState.status?.takeIf { it.isNotBlank() }?.let { lastNotificationText = it }
             isAgentTurnActive = chatState.isRunning
@@ -298,13 +366,14 @@ class AgentForegroundService : Service() {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, flags)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification_bubble)
+            .setColor(0xFF245BFF.toInt())
             .setContentTitle(if (isAgentTurnActive) "Open Claw Agent working" else "Open Claw Agent active")
             .setContentText(lastNotificationText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(lastNotificationText))
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Turn", stopPendingIntent)
+            .addAction(R.drawable.ic_close, "Stop Turn", stopPendingIntent)
             .build()
     }
 
@@ -319,6 +388,7 @@ class AgentForegroundService : Service() {
     companion object {
         private const val TAG = "AgentService"
         private const val ACTION_STOP_TURN = "dev.openclawagent.action.STOP_TURN"
+        const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
         private const val NOTIFICATION_ID = 1
         private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and Open Claw bridge are running"
         const val ACTION_STATE_CHANGED = "dev.openclawagent.action.AGENT_SERVICE_STATE_CHANGED"

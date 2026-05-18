@@ -28,6 +28,13 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("io.github.webrtc-sdk:android:144.7559.05")
 
+    val markwon = "4.6.2"
+    implementation("io.noties.markwon:core:$markwon")
+    implementation("io.noties.markwon:linkify:$markwon")
+    implementation("io.noties.markwon:ext-strikethrough:$markwon")
+    implementation("io.noties.markwon:ext-tables:$markwon")
+    implementation("io.noties.markwon:html:$markwon")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
 }

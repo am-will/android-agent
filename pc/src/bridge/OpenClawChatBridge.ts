@@ -149,7 +149,19 @@ export class OpenClawChatBridge {
 
   async newSession(message: ChatNewSessionMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
-    await this.sendSlashCommand(message.deviceId, "/new", state.sessionKey, "Creating new session");
+    const requestKey = `phone-${message.deviceId}-${randomUUID()}`;
+    const created = await this.client.createSession({
+      key: requestKey,
+      label: message.label ?? "Open Claw Agent",
+      model: message.model ?? state.model ?? undefined
+    });
+    const record = created && typeof created === "object" ? created as Record<string, unknown> : {};
+    const key = typeof record.key === "string" && record.key.trim() ? record.key.trim() : undefined;
+    state.sessionKey = key ?? `agent:${this.config.openClawChatAgentId}:explicit:${requestKey}`;
+    state.sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
+    state.runId = null;
+    this.sendState(message.deviceId, "Started a new chat");
+    await this.refreshDevice(message.deviceId);
   }
 
   async setModel(message: ChatSetModelMessage): Promise<void> {
@@ -172,23 +184,60 @@ export class OpenClawChatBridge {
     if (!command) {
       return;
     }
+    const normalized = command.startsWith("/") ? command.slice(1).trim() : command;
+    const [name = "", ...parts] = normalized.split(/\s+/);
+    const firstArg = parts[0];
 
-    if (command === "fast") {
-      const enabled = typeof message.args.enabled === "boolean" ? message.args.enabled : undefined;
+    if (name === "new") {
+      await this.newSession({
+        type: "chat.new_session",
+        deviceId: message.deviceId
+      });
+      return;
+    }
+
+    if (name === "status") {
+      this.sendState(message.deviceId, "Refreshing status");
+      await this.refreshDevice(message.deviceId);
+      this.sendState(message.deviceId, "Status refreshed");
+      return;
+    }
+
+    if (name === "fast") {
+      const enabled = typeof message.args.enabled === "boolean"
+        ? message.args.enabled
+        : firstArg === "off"
+          ? false
+          : firstArg === "on"
+            ? true
+            : undefined;
       await this.sendSlashCommand(message.deviceId, `/fast ${enabled === false ? "off" : "on"}`, state.sessionKey, "Updating fast mode");
       return;
     }
 
-    if (command === "verbose") {
-      const level = typeof message.args.level === "string" && message.args.level.trim() ? message.args.level.trim() : "on";
+    if (name === "verbose") {
+      const level = typeof message.args.level === "string" && message.args.level.trim()
+        ? message.args.level.trim()
+        : firstArg && ["on", "off", "full"].includes(firstArg)
+          ? firstArg
+          : "on";
       await this.sendSlashCommand(message.deviceId, `/verbose ${level}`, state.sessionKey, "Updating verbosity");
       return;
     }
 
-    if (command === "reasoning") {
-      const level = typeof message.args.level === "string" && message.args.level.trim() === "stream" ? "stream" : "off";
+    if (name === "reasoning") {
+      const level = typeof message.args.level === "string" && message.args.level.trim() === "stream"
+        ? "stream"
+        : firstArg === "stream"
+          ? "stream"
+          : "off";
       state.reasoningStream = level === "stream";
-      await this.sendSlashCommand(message.deviceId, `/reasoning ${level}`, state.sessionKey, `Reasoning Stream: ${state.reasoningStream ? "On" : "Off"}`);
+      await this.sendSlashCommand(
+        message.deviceId,
+        `/reasoning ${level}`,
+        state.sessionKey,
+        `Reasoning Stream: ${state.reasoningStream ? "On" : "Off"}`
+      );
       return;
     }
 
@@ -381,8 +430,12 @@ export class OpenClawChatBridge {
   private handleGatewayReasoningEvent(payload: unknown, eventName?: string): void {
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const runId = typeof record.runId === "string" ? record.runId : undefined;
+    const sessionKey = typeof record.sessionKey === "string" ? record.sessionKey : undefined;
     for (const [deviceId, state] of this.devices) {
       if (runId && state.runId && runId !== state.runId) {
+        continue;
+      }
+      if (sessionKey && sessionKey !== state.sessionKey) {
         continue;
       }
       const reasoningEvent = normalizeGatewayReasoningEvent(deviceId, state.sessionKey, payload, eventName);
@@ -395,8 +448,12 @@ export class OpenClawChatBridge {
   private handleGatewayAgentEvent(payload: unknown, eventName?: string): void {
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const runId = typeof record.runId === "string" ? record.runId : undefined;
+    const sessionKey = typeof record.sessionKey === "string" ? record.sessionKey : undefined;
     for (const [deviceId, state] of this.devices) {
       if (runId && state.runId && runId !== state.runId) {
+        continue;
+      }
+      if (sessionKey && sessionKey !== state.sessionKey) {
         continue;
       }
       const reasoningEvent = normalizeGatewayReasoningEvent(deviceId, state.sessionKey, payload, eventName);
@@ -404,9 +461,29 @@ export class OpenClawChatBridge {
         this.sendChat(deviceId, reasoningEvent);
         continue;
       }
+      const chatMessage = mapGatewayChatEvent(deviceId, payload);
+      if (chatMessage && (!("sessionKey" in chatMessage) || chatMessage.sessionKey === state.sessionKey)) {
+        if (chatMessage.type === "chat.delta" || chatMessage.type === "chat.final" || chatMessage.type === "chat.error") {
+          this.sendReasoningClear(deviceId, state.sessionKey, "runId" in chatMessage ? chatMessage.runId : state.runId ?? null);
+        }
+        this.sendChat(deviceId, chatMessage);
+        if (chatMessage.type === "chat.final" || chatMessage.type === "chat.error") {
+          state.runId = null;
+          this.sendState(deviceId, chatMessage.type === "chat.final" ? "OpenClaw finished" : "OpenClaw failed");
+          void this.refreshMetadata(deviceId);
+          void this.sendHistory(deviceId);
+        }
+        continue;
+      }
       const toolEvent = normalizeGatewayToolEvent(deviceId, state.sessionKey, payload);
       if (toolEvent) {
         this.sendChat(deviceId, toolEvent);
+      }
+      if (record.type === "run.completed") {
+        state.runId = null;
+        this.sendState(deviceId, "OpenClaw finished");
+        void this.refreshMetadata(deviceId);
+        void this.sendHistory(deviceId);
       }
     }
   }
@@ -508,10 +585,11 @@ function reasoningStreamEnabled(level: string | null | undefined): boolean | nul
   if (!level) {
     return null;
   }
-  if (level === "stream") {
+  const normalized = level.toLowerCase();
+  if (normalized === "stream") {
     return true;
   }
-  if (level === "off") {
+  if (normalized === "off" || normalized === "false") {
     return false;
   }
   return null;
