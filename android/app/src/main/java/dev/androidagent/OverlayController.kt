@@ -104,6 +104,7 @@ class OverlayController(
     private var voiceHangupButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
     private var voiceSurfaceForceHidden = false
+    private var panelDismissAnimating = false
     private var lastChatState = ChatState()
     private var historyContainer: LinearLayout? = null
     private var historyScrollView: ScrollView? = null
@@ -554,6 +555,20 @@ class OverlayController(
         host.requestFocus()
         panelView = host
         panelParams = params
+
+        // Slide in from the bottom.
+        host.post {
+            val startOffset = (host.height.takeIf { it > 0 } ?: modalHeight).toFloat()
+            host.translationY = startOffset
+            host.animate()
+                .translationY(0f)
+                .setDuration(220L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+                .start()
+        }
+        scrim.alpha = 0f
+        scrim.animate().alpha(1f).setDuration(180L).start()
+
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
         renderTranscriptionState(lastTranscriptionState)
@@ -1468,6 +1483,36 @@ class OverlayController(
         }
         anchoredPicker?.dismiss()
         anchoredPicker = null
+
+        val panel = panelView
+        val scrim = panelScrimView
+        if (panel == null) {
+            finalizePanelDismiss()
+            return
+        }
+        if (panelDismissAnimating) {
+            return
+        }
+        panelDismissAnimating = true
+
+        val translate = panel.height.takeIf { it > 0 }?.toFloat()
+            ?: context.resources.displayMetrics.heightPixels.toFloat()
+        panel.animate()
+            .translationY(translate)
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction {
+                panelDismissAnimating = false
+                finalizePanelDismiss()
+            }
+            .start()
+        scrim?.animate()
+            ?.alpha(0f)
+            ?.setDuration(220L)
+            ?.start()
+    }
+
+    private fun finalizePanelDismiss() {
         detachOverlayView(panelView)
         detachOverlayView(panelScrimView)
         panelView = null
