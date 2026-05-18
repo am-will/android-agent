@@ -166,19 +166,35 @@ class AnchoredPicker(
         val gap = dp(context, DesignTokens.Spacing.sm)
         val hostHeight = host.height
         val hostWidth = host.width
-        val sheetHeight = sheet.measuredHeight.coerceAtLeast(dp(context, 80))
+        val measuredSheetHeight = sheet.measuredHeight.coerceAtLeast(dp(context, 80))
         val sheetWidth = sheet.measuredWidth.coerceAtLeast(dp(context, 200))
+        val minSheetHeight = dp(context, 80)
 
         val spaceBelow = hostHeight - anchorBottomInHost
         val spaceAbove = anchorTopInHost
-        val placeAbove = spaceBelow < sheetHeight + gap + sideMargin && spaceAbove > spaceBelow
+        val placeAbove = spaceBelow < measuredSheetHeight + gap + sideMargin && spaceAbove > spaceBelow
 
-        val targetTop = if (placeAbove) {
-            (anchorTopInHost - sheetHeight - gap).coerceAtLeast(sideMargin)
+        var effectiveHeight = measuredSheetHeight
+        val targetTop: Int
+        if (placeAbove) {
+            val availableAbove = (anchorTopInHost - sideMargin - gap).coerceAtLeast(minSheetHeight)
+            if (measuredSheetHeight > availableAbove) {
+                effectiveHeight = availableAbove
+                val lp = sheet.layoutParams
+                lp.height = availableAbove
+                sheet.layoutParams = lp
+            }
+            // Pin the sheet's bottom edge a small gap above the anchor.
+            targetTop = anchorTopInHost - effectiveHeight - gap
         } else {
-            (anchorBottomInHost + gap)
-                .coerceAtMost(hostHeight - sheetHeight - sideMargin)
-                .coerceAtLeast(sideMargin)
+            val availableBelow = (hostHeight - anchorBottomInHost - sideMargin - gap).coerceAtLeast(minSheetHeight)
+            if (measuredSheetHeight > availableBelow) {
+                effectiveHeight = availableBelow
+                val lp = sheet.layoutParams
+                lp.height = availableBelow
+                sheet.layoutParams = lp
+            }
+            targetTop = anchorBottomInHost + gap
         }
         val rawLeft = anchorCenterX - sheetWidth / 2
         val targetLeft = rawLeft
@@ -191,7 +207,7 @@ class AnchoredPicker(
         params.rightMargin = 0
         sheet.layoutParams = params
         sheet.pivotX = (anchorCenterX - targetLeft).toFloat().coerceIn(0f, sheetWidth.toFloat())
-        sheet.pivotY = if (placeAbove) sheetHeight.toFloat() else 0f
+        sheet.pivotY = if (placeAbove) effectiveHeight.toFloat() else 0f
     }
 
     private fun buildSheet(title: String?, sections: List<Section>): View {
