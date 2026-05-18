@@ -891,14 +891,42 @@ class OverlayController(
             "read",
             "session_history", "session-history", "sessionhistory",
             "send",
-            "status"
+            "status",
+            "list",
+            "spawn",
+            "session_send", "session-send", "sessionsend",
+            "session_status", "session-status", "sessionstatus",
+            "session_list", "session-list", "sessionlist",
+            "session_spawn", "session-spawn", "sessionspawn",
+            "update_plan", "update-plan", "updateplan",
+            "web_fetch", "web-fetch", "webfetch",
+            "web_search", "web-search", "websearch",
+            "subagent", "sub_agent", "sub-agent",
+            "subagents", "sub_agents", "sub-agents"
         )
         if (rawId in hiddenExact || needle in hiddenExact) return true
         val hiddenPrefixes = listOf(
             "apply patch",
             "apply_patch",
             "session history",
-            "session_history"
+            "session_history",
+            "session send",
+            "session_send",
+            "session status",
+            "session_status",
+            "session list",
+            "session_list",
+            "session spawn",
+            "session_spawn",
+            "update plan",
+            "update_plan",
+            "web fetch",
+            "web_fetch",
+            "web search",
+            "web_search",
+            "subagent",
+            "sub_agent",
+            "sub-agent"
         )
         if (hiddenPrefixes.any { needle.startsWith(it) || rawId.startsWith(it) }) return true
         return false
