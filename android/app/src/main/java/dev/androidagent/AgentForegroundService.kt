@@ -86,9 +86,16 @@ class AgentForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         connectWebSocket()
-        if (intent?.action == ACTION_STOP_TURN) {
-            requestStopTurn("Stopped from Android notification")
-            return START_STICKY
+        when (intent?.action) {
+            ACTION_STOP_TURN -> {
+                requestStopTurn("Stopped from Android notification")
+                return START_STICKY
+            }
+            ACTION_OPEN_CHAT -> {
+                overlayController?.show()
+                overlayController?.openPanel()
+                return START_STICKY
+            }
         }
         overlayController?.show()
         return START_STICKY
@@ -320,6 +327,7 @@ class AgentForegroundService : Service() {
     companion object {
         private const val TAG = "AgentService"
         private const val ACTION_STOP_TURN = "dev.openclawagent.action.STOP_TURN"
+        const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
         private const val NOTIFICATION_ID = 1
         private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and Open Claw bridge are running"
         const val ACTION_STATE_CHANGED = "dev.openclawagent.action.AGENT_SERVICE_STATE_CHANGED"

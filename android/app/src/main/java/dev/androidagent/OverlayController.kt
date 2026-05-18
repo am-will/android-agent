@@ -397,6 +397,13 @@ class OverlayController(
         return deferred
     }
 
+    fun openPanel() {
+        mainHandler.post {
+            if (panelView != null) return@post
+            togglePanel()
+        }
+    }
+
     private fun togglePanel() {
         if (panelView != null) {
             dismissPanel()
@@ -2045,6 +2052,7 @@ class OverlayController(
         context.startActivity(
             Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_SHOW_SETTINGS, true)
         )
     }
 
