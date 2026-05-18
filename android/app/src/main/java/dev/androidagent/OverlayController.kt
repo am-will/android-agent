@@ -271,13 +271,11 @@ class OverlayController(
     fun insertComposerTranscript(transcript: String) {
         val normalized = transcript.trim()
         if (normalized.isBlank()) {
-            setStatus("Transcription result was empty.")
             return
         }
         mainHandler.post {
             val input = composerInput
             if (input == null) {
-                setStatus("Transcript ready. Open the bubble to review it.")
                 return@post
             }
             val existing = input.text.toString()
