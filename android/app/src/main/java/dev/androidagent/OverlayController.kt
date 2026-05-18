@@ -52,7 +52,7 @@ import kotlin.math.roundToInt
 
 class OverlayController(
     private val context: Context,
-    private val onSubmit: (String) -> Unit,
+    private val onSubmit: (String) -> Boolean,
     private val onStop: () -> Unit,
     private val onDismiss: () -> Unit,
     private val onStartVoice: () -> Unit,
@@ -559,9 +559,10 @@ class OverlayController(
                 } else {
                     val text = input.text.toString().trim()
                     if (text.isNotEmpty()) {
-                        onSubmit(text)
-                        input.setText("")
-                        setStatus("Sent to OpenClaw")
+                        if (onSubmit(text)) {
+                            input.setText("")
+                            setStatus("Sent to OpenClaw")
+                        }
                     }
                 }
         }

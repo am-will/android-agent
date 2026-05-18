@@ -37,9 +37,11 @@ class PhoneWebSocketClient(
     private var socket: WebSocket? = null
     private var manuallyClosed = false
     private var reconnectAttempts = 0
+    private var connected = false
 
     fun connect() {
         manuallyClosed = false
+        connected = false
         val request = Request.Builder().url(config.hostUrl).build()
         socket = client.newWebSocket(request, this)
         onStatus("Connecting to ${config.hostUrl}", "info")
@@ -47,6 +49,7 @@ class PhoneWebSocketClient(
 
     fun close() {
         manuallyClosed = true
+        connected = false
         socket?.close(1000, "service stopped")
         socket = null
         mainHandler.removeCallbacksAndMessages(null)
@@ -74,15 +77,15 @@ class PhoneWebSocketClient(
         socket?.send(message.toString())
     }
 
-    fun sendChatOpen(sessionKey: String? = null) {
+    fun sendChatOpen(sessionKey: String? = null): Boolean {
         val message = JSONObject()
             .put("type", "chat.open")
             .put("deviceId", config.deviceId)
         sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
-        socket?.send(message.toString())
+        return sendJson(message)
     }
 
-    fun sendChatMessage(text: String, sessionKey: String? = null, model: String? = null, reasoningEffort: String? = null) {
+    fun sendChatMessage(text: String, sessionKey: String? = null, model: String? = null, reasoningEffort: String? = null): Boolean {
         val message = JSONObject()
             .put("type", "chat.send")
             .put("deviceId", config.deviceId)
@@ -90,7 +93,7 @@ class PhoneWebSocketClient(
         sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
         model?.takeIf { it.isNotBlank() }?.let { message.put("model", it) }
         reasoningEffort?.takeIf { it.isNotBlank() }?.let { message.put("reasoningEffort", it) }
-        socket?.send(message.toString())
+        return sendJson(message, reportChatError = true)
     }
 
     fun sendChatStop(sessionKey: String? = null, runId: String? = null, reason: String = "Stopped from Android chat") {
@@ -100,7 +103,7 @@ class PhoneWebSocketClient(
             .put("reason", reason)
         sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
         runId?.takeIf { it.isNotBlank() }?.let { message.put("runId", it) }
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendChatSelectSession(sessionKey: String) {
@@ -108,7 +111,7 @@ class PhoneWebSocketClient(
             .put("type", "chat.select_session")
             .put("deviceId", config.deviceId)
             .put("sessionKey", sessionKey)
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendChatNewSession(label: String? = null, model: String? = null) {
@@ -117,7 +120,7 @@ class PhoneWebSocketClient(
             .put("deviceId", config.deviceId)
         label?.takeIf { it.isNotBlank() }?.let { message.put("label", it) }
         model?.takeIf { it.isNotBlank() }?.let { message.put("model", it) }
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendChatSetModel(sessionKey: String?, model: String) {
@@ -126,7 +129,7 @@ class PhoneWebSocketClient(
             .put("deviceId", config.deviceId)
             .put("model", model)
         sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendChatSetReasoning(sessionKey: String?, reasoningEffort: String) {
@@ -135,7 +138,7 @@ class PhoneWebSocketClient(
             .put("deviceId", config.deviceId)
             .put("reasoningEffort", reasoningEffort)
         sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendChatControlCommand(command: String, args: JSONObject = JSONObject()) {
@@ -190,6 +193,7 @@ class PhoneWebSocketClient(
 
     override fun onOpen(webSocket: WebSocket, response: Response) {
         reconnectAttempts = 0
+        connected = true
         val register = JSONObject()
             .put("type", "register")
             .put("deviceId", config.deviceId)
@@ -234,13 +238,32 @@ class PhoneWebSocketClient(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+        connected = false
         onStatus("WebSocket error: ${t.message}", "error")
         scheduleReconnect()
     }
 
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+        connected = false
         onStatus("Disconnected: $reason", "error")
         scheduleReconnect()
+    }
+
+    private fun sendJson(message: JSONObject, reportChatError: Boolean = false): Boolean {
+        val type = message.optString("type", "message")
+        val sent = connected && socket?.send(message.toString()) == true
+        Log.i(TAG, "send $type sent=$sent connected=$connected")
+        if (!sent) {
+            val error = "Bridge is not connected. Check the PC bridge at ${config.hostUrl}; reconnecting..."
+            onStatus(error, "error")
+            if (reportChatError) {
+                onChatMessage(JSONObject()
+                    .put("type", "chat.error")
+                    .put("deviceId", config.deviceId)
+                    .put("message", error))
+            }
+        }
+        return sent
     }
 
     private fun scheduleReconnect() {

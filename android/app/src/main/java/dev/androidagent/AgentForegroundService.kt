@@ -130,19 +130,25 @@ class AgentForegroundService : Service() {
         ).also { it.connect() }
     }
 
-    private fun submitChatText(text: String) {
+    private fun submitChatText(text: String): Boolean {
         connectWebSocket()
         chatState = ChatStateReducer.localUserMessage(chatState, text)
         overlayController?.setChatState(chatState)
-        webSocketClient?.sendChatMessage(
+        val sent = webSocketClient?.sendChatMessage(
             text = text,
             sessionKey = chatState.sessionKey,
             model = chatState.selectedModel,
             reasoningEffort = chatState.reasoningEffort
-        )
-        lastNotificationText = "Sent to OpenClaw"
-        isAgentTurnActive = true
+        ) == true
+        if (sent) {
+            lastNotificationText = "Sent to OpenClaw"
+            isAgentTurnActive = true
+        } else {
+            lastNotificationText = "Bridge is not connected"
+            isAgentTurnActive = false
+        }
         updateNotification()
+        return sent
     }
 
     private fun handleChatMessage(message: JSONObject) {
