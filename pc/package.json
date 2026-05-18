@@ -10,8 +10,8 @@
     "bridge": "tsx src/bridge/server.ts",
     "mcp": "tsx src/mcp/androidPhoneServer.ts",
     "openclaw:mcp": "tsx src/scripts/configureOpenClawMcp.ts",
-    "phone:usb": "adb reverse tcp:8787 tcp:8787 && adb shell am start -n dev.androidagent/.MainActivity --ez startAgent true",
-    "phone:health": "curl -sS http://127.0.0.1:8787/health",
+    "phone:usb": "adb reverse tcp:8788 tcp:8788 && adb shell am start -n dev.openclawagent/dev.androidagent.MainActivity --ez startAgent true",
+    "phone:health": "curl -sS http://127.0.0.1:8788/health",
     "demo:open-settings": "tsx src/scripts/sendCommand.ts open_app '{\"appName\":\"Settings\"}'",
     "demo:agent": "tsx src/scripts/sendUserRequest.ts",
     "codex:schemas": "codex app-server generate-ts --out src/generated/codex-app-server"

@@ -15,7 +15,7 @@
 - PC type check: `cd pc && npm run check`
 - PC build: `cd pc && npm run build`
 - PC tests: `cd pc && npm test`
-- PC bridge: `cd pc && PHONE_AGENT_TOKEN=change-me npm run bridge`
+- PC bridge: `cd pc && PHONE_AGENT_TOKEN=12345678 npm run bridge`
 - PC MCP server: `cd pc && npm run mcp`
 - Register phone MCP with OpenClaw: `cd pc && npm run openclaw:mcp`
 - PC bridge health: `cd pc && npm run phone:health`

@@ -9,7 +9,7 @@ This is the preferred mode once the app is installed. It does not rely on `adb r
 1. Start the bridge on the PC:
 
 ```bash
-export PHONE_AGENT_TOKEN=change-me
+export PHONE_AGENT_TOKEN=12345678
 npm run bridge
 ```
 
@@ -27,20 +27,20 @@ ifconfig | rg "inet .*broadcast|status: active|^[a-z].*:"
 
 3. On Android, set:
 
-- WebSocket URL: `ws://<pc-lan-ip>:8787/phone`
-- Device ID: `pixel`
-- Token: `change-me`
+- WebSocket URL: `ws://<pc-lan-ip>:8788/phone`
+- Device ID: `openclaw-agent`
+- Token: `12345678`
 
 For example:
 
-- WebSocket URL: `ws://192.168.1.163:8787/phone`
+- WebSocket URL: `ws://192.168.1.163:8788/phone`
 
 4. Tap **Save**, then **Start Agent Bubble**.
 
 The bridge `/health` endpoint shows connected phones:
 
 ```bash
-curl http://127.0.0.1:8787/health
+curl http://127.0.0.1:8788/health
 ```
 
 You should see the device under `phones`.
@@ -52,10 +52,10 @@ If the phone does not register:
 - Confirm the bridge is listening on all interfaces:
 
 ```bash
-lsof -nP -iTCP:8787 -sTCP:LISTEN
+lsof -nP -iTCP:8788 -sTCP:LISTEN
 ```
 
-The listener should show `*:8787`, not only `127.0.0.1:8787`.
+The listener should show `*:8788`, not only `127.0.0.1:8788`.
 
 - If macOS prompts for local-network/firewall access, allow it for the terminal or Node.js process running the bridge.
 
@@ -71,7 +71,7 @@ npm run phone:usb
 In this mode the Android app may use:
 
 ```text
-ws://127.0.0.1:8787/phone
+ws://127.0.0.1:8788/phone
 ```
 
 Run `npm run phone:usb` again after reconnecting USB.

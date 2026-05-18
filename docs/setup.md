@@ -15,8 +15,8 @@ Install, register the optional phone-control MCP server with OpenClaw, and start
 ```bash
 cd pc
 npm install
-export PHONE_AGENT_TOKEN=change-me
-export PHONE_AGENT_DEFAULT_DEVICE=pixel
+export PHONE_AGENT_TOKEN=12345678
+export PHONE_AGENT_DEFAULT_DEVICE=openclaw-agent
 export PHONE_AGENT_DISPATCHER=openclaw
 npm run openclaw:mcp
 npm run bridge
@@ -24,9 +24,9 @@ npm run bridge
 
 The bridge exposes:
 
-- `ws://0.0.0.0:8787/phone` for Android
-- `http://127.0.0.1:8787/health` for local status
-- `POST http://127.0.0.1:8787/api/phone/default/command` for the optional `android-phone` tool adapter
+- `ws://0.0.0.0:8788/phone` for Android
+- `http://127.0.0.1:8788/health` for local status
+- `POST http://127.0.0.1:8788/api/phone/default/command` for the optional `android-phone` tool adapter
 
 The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime intents route to OpenClaw by default. Phone-control tool calls are only one possible capability of that OpenClaw session.
 
@@ -52,7 +52,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 For USB testing, forward the bridge port so the phone can use the default loopback URL:
 
 ```bash
-adb reverse tcp:8787 tcp:8787
+adb reverse tcp:8788 tcp:8788
 ```
 
 Accessibility is intentionally user-controlled by Android. It is commonly disabled by the OS after reinstalling/updating a sideloaded APK, after uninstall/reinstall cycles, or if Android's restricted-settings gate has not been allowed. For the most stable testing loop: install once, allow restricted settings once, enable Accessibility manually once, then use normal app restarts without reinstalling.

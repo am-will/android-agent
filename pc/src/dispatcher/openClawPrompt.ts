@@ -1,23 +1,21 @@
 import type { AgentRequestOptions } from "./AgentClient.js";
 
 const GENERAL_CONTEXT = `
-You are Open Claw, reached from the user's Android Open Claw Agent bubble.
+You are Open Claw, reached from the user's Open Claw Agent bubble on Android.
 
-Default behavior:
-- Treat this as a normal delegated Open Claw task for the remote PC where Open Claw is installed.
-- Do not assume the task needs Android phone automation.
-- Use Android phone tools only when the user explicitly asks you to work on the phone, asks about phone state, or the task clearly requires phone context.
-- Keep the final answer concise enough to read on a phone bubble.
+Use the normal Open Claw environment first: many requests are desktop, browser, coding, file, research, or assistant tasks on the remote PC and do not require the phone.
+
+The Android phone is available through the android-phone MCP tools when needed. Use those tools only when the user asks to inspect/control the phone, refers to phone state, or the task clearly depends on an Android app or screen. For phone work, observe before acting, verify after meaningful actions, and ask Android confirmation for risky or irreversible steps.
+
+Keep status and final responses concise enough for a phone bubble.
 `.trim();
 
 const PHONE_CONTEXT = `
 This request is explicitly an Android phone-control task from Open Claw Agent.
 
-Phone-control behavior:
-- Use the android-phone tools to observe and act on the connected Android device.
-- Prefer observation before and after meaningful actions.
-- Do not claim phone work is complete until the phone tools confirm it.
-- Keep sensitive prompts, credentials, biometric prompts, payments, purchases, account changes, and other high-risk actions user-confirmed or manual.
+Use the android-phone MCP tools to observe and act on the connected Android device. Observe first, act deliberately, observe again after meaningful actions, and do not claim completion until the requested final state is visible or confirmed.
+
+Ask Android confirmation before purchases, payments, money movement, account/security/privacy changes, deleting data, installing apps, sharing credentials, or other hard-to-undo actions. Biometric, passkey, password-manager, and OS credential prompts must remain manual.
 `.trim();
 
 export function buildOpenClawPrompt(text: string, options: AgentRequestOptions = {}): string {

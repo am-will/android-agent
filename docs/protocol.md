@@ -7,8 +7,8 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
 ```json
 {
   "type": "register",
-  "deviceId": "pixel",
-  "token": "change-me",
+  "deviceId": "openclaw-agent",
+  "token": "12345678",
   "capabilities": ["accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice"]
 }
 ```
@@ -64,7 +64,7 @@ Coordinate taps use full-screen pixels, including the status and navigation bars
 ```json
 {
   "type": "user_request",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "inputType": "text",
   "text": "Open Settings"
 }
@@ -75,7 +75,7 @@ Coordinate taps use full-screen pixels, including the status and navigation bars
 ```json
 {
   "type": "agent_status",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "status": "working",
   "text": "Agent started working"
 }
@@ -88,7 +88,7 @@ Android can ask the bridge to stop the active phone-control turn. The same messa
 ```json
 {
   "type": "agent_control",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "action": "stop",
   "reason": "Stopped from Android notification"
 }
@@ -107,7 +107,7 @@ Android sends:
 ```json
 {
   "type": "realtime.start",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "sdp": "v=0\r\n...",
   "location": {
     "latitude": 31.7619,
@@ -127,7 +127,7 @@ The bridge replies with the remote SDP answer:
 ```json
 {
   "type": "realtime.sdp",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "sdp": "v=0\r\n..."
 }
 ```
@@ -139,7 +139,7 @@ Transcript deltas and final transcript text both use `realtime.transcript_delta`
 ```json
 {
   "type": "realtime.transcript_delta",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "role": "assistant",
   "delta": "Open",
   "isFinal": false
@@ -149,7 +149,7 @@ Transcript deltas and final transcript text both use `realtime.transcript_delta`
 ```json
 {
   "type": "realtime.transcript_delta",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "role": "assistant",
   "delta": "",
   "text": "Opening Settings.",
@@ -162,7 +162,7 @@ Raw non-audio realtime items are forwarded for Android-side normalization or deb
 ```json
 {
   "type": "realtime.item_added",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "item": { "type": "message", "role": "assistant" }
 }
 ```
@@ -176,7 +176,7 @@ Use `delegate_openclaw_task` for general work that should happen in OpenClaw on 
 ```json
 {
   "type": "realtime.tool_call",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_general",
   "name": "delegate_openclaw_task",
   "arguments": {
@@ -193,7 +193,7 @@ Use `run_phone_task` for new actionable phone tasks:
 ```json
 {
   "type": "realtime.tool_call",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_abc",
   "itemId": "item_abc",
   "name": "run_phone_task",
@@ -211,7 +211,7 @@ Use `steer_phone_task` when the user corrects or adds information while a phone 
 ```json
 {
   "type": "realtime.tool_call",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_steer",
   "name": "steer_phone_task",
   "arguments": {
@@ -227,7 +227,7 @@ Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the ph
 ```json
 {
   "type": "realtime.tool_call",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_stop",
   "name": "stop_phone_task",
   "arguments": {
@@ -243,7 +243,7 @@ Use `hang_up_realtime` when the user says to hang up, end the call, or stop list
 ```json
 {
   "type": "realtime.tool_call",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_hangup",
   "name": "hang_up_realtime",
   "arguments": {
@@ -258,7 +258,7 @@ Use `web_search` for current-information questions that do not require controlli
 ```json
 {
   "type": "realtime.tool_call",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_search",
   "name": "web_search",
   "arguments": {
@@ -272,7 +272,7 @@ Task status updates are sent whenever the active task or queue changes:
 ```json
 {
   "type": "realtime.task_status",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "running": true,
   "queued": 1,
   "currentTask": "Open Facebook messages",
@@ -286,7 +286,7 @@ When the task finishes, fails, times out, or is cancelled, the bridge sends a co
 ```json
 {
   "type": "realtime.tool_result",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "callId": "call_abc",
   "ok": true,
   "status": "completed",
@@ -301,7 +301,7 @@ Speech-start notifications are shown when the WebRTC data channel emits an OpenA
 ```json
 {
   "type": "realtime.speech_started",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "role": "user",
   "itemId": null
 }
@@ -325,7 +325,7 @@ Android sends:
 ```json
 {
   "type": "realtime.stop",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "reason": "User hung up"
 }
 ```
@@ -335,7 +335,7 @@ The bridge sends `realtime.error` if OpenAI rejects startup, stop, or a runtime 
 ```json
 {
   "type": "realtime.error",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "message": "OpenAI realtime call failed: 401 Unauthorized"
 }
 ```
@@ -345,7 +345,7 @@ The bridge sends `realtime.closed` when the realtime transport closes or the loc
 ```json
 {
   "type": "realtime.closed",
-  "deviceId": "pixel",
+  "deviceId": "openclaw-agent",
   "reason": "User hung up"
 }
 ```

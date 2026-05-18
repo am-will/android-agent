@@ -274,12 +274,12 @@ class AgentForegroundService : Service() {
 
     companion object {
         private const val TAG = "AgentService"
-        private const val ACTION_STOP_TURN = "dev.androidagent.action.STOP_TURN"
+        private const val ACTION_STOP_TURN = "dev.openclawagent.action.STOP_TURN"
         private const val NOTIFICATION_ID = 1
         private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and Open Claw bridge are running"
-        const val ACTION_STATE_CHANGED = "dev.androidagent.action.AGENT_SERVICE_STATE_CHANGED"
+        const val ACTION_STATE_CHANGED = "dev.openclawagent.action.AGENT_SERVICE_STATE_CHANGED"
         const val EXTRA_IS_RUNNING = "isRunning"
-        const val CHANNEL_ID = "android-agent"
+        const val CHANNEL_ID = "open-claw-agent"
         var isRunning: Boolean = false
             private set
     }

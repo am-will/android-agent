@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { PhoneCommand, PhoneCommandResult } from "../protocol/messages.js";
 
 export class PhoneToolClient {
-  constructor(private readonly bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8787") {}
+  constructor(private readonly bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8788") {}
 
   async command(command: PhoneCommand, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<PhoneCommandResult> {
     const controller = new AbortController();

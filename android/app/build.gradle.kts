@@ -8,7 +8,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.androidagent"
+        applicationId = "dev.openclawagent"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

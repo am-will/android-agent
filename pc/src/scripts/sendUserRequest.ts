@@ -4,8 +4,8 @@ if (!text) {
   throw new Error("Usage: npm run demo:agent -- \"Open Settings\"");
 }
 
-const bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8787";
-const deviceId = process.env.PHONE_AGENT_DEFAULT_DEVICE ?? "pixel";
+const bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8788";
+const deviceId = process.env.PHONE_AGENT_DEFAULT_DEVICE ?? "openclaw-agent";
 
 const response = await fetch(`${bridgeUrl}/api/user_request`, {
   method: "POST",

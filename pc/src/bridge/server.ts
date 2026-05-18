@@ -358,6 +358,6 @@ wss.on("connection", (socket) => {
 });
 
 server.listen(config.port, config.host, () => {
-  console.log(`android-agent bridge listening on ws://${config.host}:${config.port}/phone`);
+  console.log(`open-claw-agent bridge listening on ws://${config.host}:${config.port}/phone`);
   console.log(`HTTP API listening on ${config.bridgeUrl}`);
 });

@@ -8,7 +8,7 @@ const pcRoot = resolve(scriptDir, "../..");
 const repoRoot = resolve(pcRoot, "..");
 const tsxBin = resolve(pcRoot, "node_modules/.bin/tsx");
 const mcpServer = resolve(pcRoot, "src/mcp/androidPhoneServer.ts");
-const bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8787";
+const bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8788";
 const openClawCommand = process.env.OPENCLAW_AGENT_COMMAND?.trim() || "openclaw";
 
 if (!existsSync(tsxBin)) {

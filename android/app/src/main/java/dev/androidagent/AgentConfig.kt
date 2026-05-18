@@ -13,7 +13,7 @@ data class AgentConfig(
 )
 
 object AgentConfigStore {
-    private const val PREFS = "android_agent_config"
+    private const val PREFS = "open_claw_agent_config"
     private const val HOST_URL = "host_url"
     private const val DEVICE_ID = "device_id"
     private const val TOKEN = "token"
@@ -25,9 +25,9 @@ object AgentConfigStore {
     fun load(context: Context): AgentConfig {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return AgentConfig(
-            hostUrl = prefs.getString(HOST_URL, "ws://127.0.0.1:8787/phone") ?: "ws://127.0.0.1:8787/phone",
-            deviceId = prefs.getString(DEVICE_ID, "pixel") ?: "pixel",
-            token = prefs.getString(TOKEN, "change-me") ?: "change-me",
+            hostUrl = prefs.getString(HOST_URL, "ws://127.0.0.1:8788/phone") ?: "ws://127.0.0.1:8788/phone",
+            deviceId = prefs.getString(DEVICE_ID, "openclaw-agent") ?: "openclaw-agent",
+            token = prefs.getString(TOKEN, "12345678") ?: "12345678",
             openAiApiKey = prefs.getString(OPENAI_API_KEY, "") ?: "",
             systemPrompt = prefs.getString(SYSTEM_PROMPT, DefaultSystemPrompt.text) ?: DefaultSystemPrompt.text,
             model = prefs.getString(MODEL, "gpt-5.5") ?: "gpt-5.5",
