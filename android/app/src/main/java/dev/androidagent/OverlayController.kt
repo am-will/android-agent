@@ -725,8 +725,7 @@ class OverlayController(
         transcriptionMicButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_mic,
-            contentDescription = "Start voice transcription",
-            compact = true
+            contentDescription = "Start voice transcription"
         ) {
             if (lastTranscriptionState.isRecording) {
                 onStopTranscription()
@@ -734,7 +733,7 @@ class OverlayController(
                 onStartTranscription()
             }
         }
-        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(controlSize, controlSize).apply { rightMargin = controlGap })
+        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(sendSize, sendSize).apply { rightMargin = dp(DesignTokens.Spacing.sm) })
 
         transcriptionCancelButton = Button(context).apply {
             text = "Cancel"
