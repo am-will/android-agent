@@ -118,6 +118,7 @@ class OverlayController(
     private var restorePanelFocusAfterAutomation = false
     private var restoreComposerFocusAfterAutomation = false
     private var keyboardFallbackSuppressed = false
+    private var stableKeyboardFrameObserved = false
 
     private data class OverlayPalette(
         val surface: Int,
@@ -502,6 +503,7 @@ class OverlayController(
 
         windowManager.addView(panel, params)
         panel.viewTreeObserver.addOnGlobalLayoutListener { positionPanelAboveKeyboard(panel, params) }
+        scrim.viewTreeObserver.addOnGlobalLayoutListener { positionPanelAboveKeyboard(panel, params) }
         panel.requestFocus()
         panelView = panel
         panelParams = params
@@ -513,12 +515,14 @@ class OverlayController(
     private fun buildComposerInput(palette: OverlayPalette): EditText {
         return object : EditText(context) {
             override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
-                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                if (keyCode == KeyEvent.KEYCODE_BACK) {
                     suppressKeyboardFallback()
                     panelView?.let { panel ->
                         panelParams?.let { params -> restorePanelDefaultSize(panel, params) }
                     }
-                    clearFocus()
+                    if (event.action == KeyEvent.ACTION_UP) {
+                        clearFocus()
+                    }
                 }
                 return super.onKeyPreIme(keyCode, event)
             }
@@ -1654,9 +1658,19 @@ class OverlayController(
         } else {
             0
         }
+        val stableFrameKeyboardHeight = keyboardHeightFromStableFrame(displayHeight)
+        if (stableFrameKeyboardHeight >= dp(120)) {
+            stableKeyboardFrameObserved = true
+        }
         val keyboardHeight = if (imeHeight >= dp(120)) {
             keyboardFallbackSuppressed = false
             imeHeight
+        } else if (stableFrameKeyboardHeight >= dp(120)) {
+            keyboardFallbackSuppressed = false
+            stableFrameKeyboardHeight
+        } else if (stableKeyboardFrameObserved) {
+            suppressKeyboardFallback()
+            0
         } else if (composerInput?.hasFocus() == true && isKeyboardFallbackActive()) {
             estimatedKeyboardHeight(displayHeight)
         } else {
@@ -1680,6 +1694,16 @@ class OverlayController(
             params.y = desiredY
             windowManager.updateViewLayout(panel, params)
         }
+    }
+
+    private fun keyboardHeightFromStableFrame(displayHeight: Int): Int {
+        val scrim = panelScrimView ?: return 0
+        if (!isOverlayAttached(scrim)) {
+            return 0
+        }
+        val visible = Rect()
+        scrim.getWindowVisibleDisplayFrame(visible)
+        return (displayHeight - visible.bottom).coerceAtLeast(0)
     }
 
     private fun armKeyboardFallback() {
