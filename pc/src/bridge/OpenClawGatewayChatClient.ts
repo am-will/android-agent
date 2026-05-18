@@ -6,6 +6,7 @@ import type {
   ChatHistoryMessage,
   ChatModelOption,
   ChatOutboundMessage,
+  ChatReasoningDeltaMessage,
   ChatReasoningOption,
   ChatSessionSummary,
   ChatToolEventMessage,
@@ -179,6 +180,7 @@ export function normalizeSessions(value: unknown): ChatSessionSummary[] {
       fastMode: booleanField(record, "fastMode"),
       hasActiveRun: booleanField(record, "hasActiveRun"),
       thinkingLevel: stringField(record, "thinkingLevel") ?? null,
+      reasoningLevel: stringField(record, "reasoningLevel") ?? null,
       verboseLevel: stringField(record, "verboseLevel") ?? null
     });
   }
@@ -293,6 +295,60 @@ export function normalizeGatewayToolEvent(
     output: data.output ?? data.result ?? null,
     error: stringField(data, "error") ?? null,
     raw: payload
+  };
+}
+
+export function normalizeGatewayReasoningEvent(
+  deviceId: string,
+  fallbackSessionKey: string,
+  payload: unknown,
+  eventName?: string
+): ChatReasoningDeltaMessage | undefined {
+  const record = asRecord(payload);
+  if (!record) {
+    return undefined;
+  }
+  const data = asRecord(record.data) ?? asRecord(record.payload) ?? record;
+  const normalizedEvent = (eventName ?? stringField(record, "event") ?? stringField(data, "event") ?? "").toLowerCase();
+  const normalizedType = (stringField(record, "type") ?? stringField(data, "type") ?? "").toLowerCase();
+  const normalizedState = (stringField(record, "state") ?? stringField(data, "state") ?? "").toLowerCase();
+  const normalizedStream = (stringField(record, "stream") ?? stringField(data, "stream") ?? "").toLowerCase();
+  const sourceText = [normalizedEvent, normalizedType, normalizedState, normalizedStream].join(" ");
+  const isReasoningEvent = sourceText.includes("thinking")
+    || sourceText.includes("reasoning")
+    || normalizedState === "plan";
+  const isDeltaLike = sourceText.includes("delta")
+    || sourceText.includes("update")
+    || sourceText.includes("stream")
+    || normalizedState === "thinking"
+    || normalizedState === "reasoning"
+    || normalizedState === "plan";
+  if (!isReasoningEvent || !isDeltaLike) {
+    return undefined;
+  }
+
+  const delta = [
+    data.delta,
+    data.deltaText,
+    data.text,
+    data.message,
+    data.content,
+    record.delta,
+    record.deltaText,
+    record.message,
+    record.content
+  ].map(extractGatewayText).find((text) => text.trim());
+  if (!delta) {
+    return undefined;
+  }
+
+  return {
+    type: "chat.reasoning_delta",
+    deviceId,
+    sessionKey: stringField(record, "sessionKey") ?? stringField(data, "sessionKey") ?? fallbackSessionKey,
+    runId: stringField(record, "runId") ?? stringField(data, "runId") ?? `${record.seq ?? randomUUID()}`,
+    delta,
+    replace: Boolean(record.replace ?? data.replace)
   };
 }
 

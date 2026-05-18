@@ -294,6 +294,7 @@ export interface ChatSessionSummary {
   fastMode?: boolean | null;
   hasActiveRun?: boolean | null;
   thinkingLevel?: string | null;
+  reasoningLevel?: string | null;
   verboseLevel?: string | null;
 }
 
@@ -351,6 +352,7 @@ export interface ChatStateMessage {
   status?: string | null;
   model?: string | null;
   reasoningEffort?: string | null;
+  reasoningStream?: boolean | null;
   fastMode?: boolean | null;
   verboseLevel?: string | null;
 }
@@ -370,6 +372,22 @@ export interface ChatDeltaMessage {
   runId: string;
   delta: string;
   replace?: boolean;
+}
+
+export interface ChatReasoningDeltaMessage {
+  type: "chat.reasoning_delta";
+  deviceId: string;
+  sessionKey: string;
+  runId: string;
+  delta: string;
+  replace?: boolean;
+}
+
+export interface ChatReasoningClearMessage {
+  type: "chat.reasoning_clear";
+  deviceId: string;
+  sessionKey: string;
+  runId?: string | null;
 }
 
 export interface ChatFinalMessage {
@@ -443,6 +461,8 @@ export type ChatOutboundMessage =
   | ChatStateMessage
   | ChatHistoryOutboundMessage
   | ChatDeltaMessage
+  | ChatReasoningDeltaMessage
+  | ChatReasoningClearMessage
   | ChatFinalMessage
   | ChatErrorMessage
   | ChatToolEventMessage

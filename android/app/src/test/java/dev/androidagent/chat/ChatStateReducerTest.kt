@@ -76,6 +76,53 @@ class ChatStateReducerTest {
     }
 
     @Test
+    fun reasoningDeltasStreamIntoTemporaryRowThenAssistantClearsIt() {
+        val withReasoning = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.reasoning_delta")
+            .put("sessionKey", "agent:main:main")
+            .put("runId", "run1")
+            .put("delta", "Checking"))
+        val withMoreReasoning = ChatStateReducer.reduce(withReasoning, JSONObject()
+            .put("type", "chat.reasoning_delta")
+            .put("sessionKey", "agent:main:main")
+            .put("runId", "run1")
+            .put("delta", " files"))
+        val withAssistant = ChatStateReducer.reduce(withMoreReasoning, JSONObject()
+            .put("type", "chat.delta")
+            .put("sessionKey", "agent:main:main")
+            .put("runId", "run1")
+            .put("delta", "Done"))
+
+        val reasoning = withMoreReasoning.timeline.single()
+        assertEquals(ChatTimelineKind.REASONING, reasoning.kind)
+        assertEquals("Checking files", reasoning.text)
+        assertTrue(reasoning.isStreaming)
+        assertEquals(true, withMoreReasoning.reasoningStreamEnabled)
+
+        val clearingReasoning = withAssistant.timeline.first { it.kind == ChatTimelineKind.REASONING }
+        assertTrue(clearingReasoning.isClearing)
+        assertFalse(clearingReasoning.isStreaming)
+        assertEquals("Done", withAssistant.timeline.first { it.role == "assistant" }.text)
+    }
+
+    @Test
+    fun stateAndSessionsTrackReasoningStream() {
+        val fromState = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.state")
+            .put("sessionKey", "agent:main:main")
+            .put("reasoningStream", true))
+        val fromSessions = ChatStateReducer.reduce(fromState, JSONObject()
+            .put("type", "chat.sessions")
+            .put("selectedSessionKey", "agent:main:main")
+            .put("sessions", JSONArray().put(JSONObject()
+                .put("key", "agent:main:main")
+                .put("reasoningLevel", "off"))))
+
+        assertEquals(true, fromState.reasoningStreamEnabled)
+        assertEquals(false, fromSessions.reasoningStreamEnabled)
+    }
+
+    @Test
     fun sessionsUpdateUsageAndSelections() {
         val state = ChatStateReducer.reduce(ChatState(), JSONObject()
             .put("type", "chat.sessions")

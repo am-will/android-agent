@@ -4,6 +4,7 @@ import {
   chatMessagesFromHistory,
   extractGatewayText,
   mapGatewayChatEvent,
+  normalizeGatewayReasoningEvent,
   normalizeGatewayToolEvent,
   normalizeModels,
   normalizeSessions,
@@ -140,8 +141,30 @@ test("normalizers map Gateway model and session metadata", () => {
     fastMode: null,
     hasActiveRun: false,
     thinkingLevel: null,
+    reasoningLevel: null,
     verboseLevel: null
   }]);
+});
+
+test("normalizeGatewayReasoningEvent maps thinking deltas", () => {
+  assert.deepEqual(
+    normalizeGatewayReasoningEvent("phone", "agent:main:main", {
+      runId: "run1",
+      sessionKey: "agent:main:main",
+      data: {
+        type: "thinking.delta",
+        delta: "Checking context"
+      }
+    }, "thinking.delta"),
+    {
+      type: "chat.reasoning_delta",
+      deviceId: "phone",
+      sessionKey: "agent:main:main",
+      runId: "run1",
+      delta: "Checking context",
+      replace: false
+    }
+  );
 });
 
 test("normalizeGatewayToolEvent produces expandable tool rows", () => {

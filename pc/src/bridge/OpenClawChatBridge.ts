@@ -19,6 +19,7 @@ import {
   chatMessagesFromHistory,
   mapGatewayChatEvent,
   normalizeCommands,
+  normalizeGatewayReasoningEvent,
   normalizeGatewayToolEvent,
   normalizeModels,
   normalizeReasoningOptions,
@@ -35,6 +36,7 @@ interface DeviceChatState {
   runId?: string | null;
   model?: string | null;
   reasoningEffort?: string | null;
+  reasoningStream?: boolean | null;
   fastMode?: boolean | null;
   verboseLevel?: string | null;
 }
@@ -51,10 +53,13 @@ export class OpenClawChatBridge {
   ) {
     this.client = new OpenClawGatewayChatClient(config);
     this.client.addEventListener((event) => {
+      const eventName = event.event.toLowerCase();
       if (event.event === "chat") {
         this.handleGatewayChatEvent(event.payload);
       } else if (event.event === "agent") {
-        this.handleGatewayAgentEvent(event.payload);
+        this.handleGatewayAgentEvent(event.payload, event.event);
+      } else if (eventName.includes("thinking") || eventName.includes("reasoning")) {
+        this.handleGatewayReasoningEvent(event.payload, event.event);
       }
     });
   }
@@ -180,6 +185,13 @@ export class OpenClawChatBridge {
       return;
     }
 
+    if (command === "reasoning") {
+      const level = typeof message.args.level === "string" && message.args.level.trim() === "stream" ? "stream" : "off";
+      state.reasoningStream = level === "stream";
+      await this.sendSlashCommand(message.deviceId, `/reasoning ${level}`, state.sessionKey, `Reasoning Stream: ${state.reasoningStream ? "On" : "Off"}`);
+      return;
+    }
+
     const slashText = command.startsWith("/") ? command : `/${command}`;
     await this.send({
       type: "chat.send",
@@ -203,6 +215,7 @@ export class OpenClawChatBridge {
       runId: null,
       model: null,
       reasoningEffort: null,
+      reasoningStream: null,
       fastMode: null,
       verboseLevel: null
     };
@@ -263,6 +276,7 @@ export class OpenClawChatBridge {
       state.sessionId = selected.sessionId ?? null;
       state.model = selected.model ?? state.model ?? null;
       state.reasoningEffort = selected.thinkingLevel ?? state.reasoningEffort ?? null;
+      state.reasoningStream = reasoningStreamEnabled(selected.reasoningLevel) ?? state.reasoningStream ?? null;
       state.fastMode = selected.fastMode ?? null;
       state.verboseLevel = selected.verboseLevel ?? null;
     }
@@ -287,6 +301,7 @@ export class OpenClawChatBridge {
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     state.sessionId = typeof record.sessionId === "string" ? record.sessionId : state.sessionId ?? null;
     state.reasoningEffort = typeof record.thinkingLevel === "string" ? record.thinkingLevel : state.reasoningEffort ?? null;
+    state.reasoningStream = typeof record.reasoningLevel === "string" ? reasoningStreamEnabled(record.reasoningLevel) : state.reasoningStream ?? null;
     state.fastMode = typeof record.fastMode === "boolean" ? record.fastMode : state.fastMode ?? null;
     state.verboseLevel = typeof record.verboseLevel === "string" ? record.verboseLevel : state.verboseLevel ?? null;
     this.sendChat(deviceId, {
@@ -350,6 +365,9 @@ export class OpenClawChatBridge {
       if (!message || ("sessionKey" in message && message.sessionKey !== state.sessionKey)) {
         continue;
       }
+      if (message.type === "chat.delta" || message.type === "chat.final" || message.type === "chat.error") {
+        this.sendReasoningClear(deviceId, state.sessionKey, "runId" in message ? message.runId : state.runId ?? null);
+      }
       this.sendChat(deviceId, message);
       if (message.type === "chat.final" || message.type === "chat.error") {
         state.runId = null;
@@ -360,11 +378,30 @@ export class OpenClawChatBridge {
     }
   }
 
-  private handleGatewayAgentEvent(payload: unknown): void {
+  private handleGatewayReasoningEvent(payload: unknown, eventName?: string): void {
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const runId = typeof record.runId === "string" ? record.runId : undefined;
     for (const [deviceId, state] of this.devices) {
       if (runId && state.runId && runId !== state.runId) {
+        continue;
+      }
+      const reasoningEvent = normalizeGatewayReasoningEvent(deviceId, state.sessionKey, payload, eventName);
+      if (reasoningEvent && reasoningEvent.sessionKey === state.sessionKey) {
+        this.sendChat(deviceId, reasoningEvent);
+      }
+    }
+  }
+
+  private handleGatewayAgentEvent(payload: unknown, eventName?: string): void {
+    const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const runId = typeof record.runId === "string" ? record.runId : undefined;
+    for (const [deviceId, state] of this.devices) {
+      if (runId && state.runId && runId !== state.runId) {
+        continue;
+      }
+      const reasoningEvent = normalizeGatewayReasoningEvent(deviceId, state.sessionKey, payload, eventName);
+      if (reasoningEvent && reasoningEvent.sessionKey === state.sessionKey) {
+        this.sendChat(deviceId, reasoningEvent);
         continue;
       }
       const toolEvent = normalizeGatewayToolEvent(deviceId, state.sessionKey, payload);
@@ -386,8 +423,18 @@ export class OpenClawChatBridge {
       status: status ?? null,
       model: state.model ?? null,
       reasoningEffort: state.reasoningEffort ?? null,
+      reasoningStream: state.reasoningStream ?? null,
       fastMode: state.fastMode ?? null,
       verboseLevel: state.verboseLevel ?? null
+    });
+  }
+
+  private sendReasoningClear(deviceId: string, sessionKey: string, runId?: string | null): void {
+    this.sendChat(deviceId, {
+      type: "chat.reasoning_clear",
+      deviceId,
+      sessionKey,
+      runId: runId ?? null
     });
   }
 
@@ -455,4 +502,17 @@ function isExplicitPhoneTask(text: string): boolean {
   const normalized = text.toLowerCase();
   return /\b(android|phone|device|screen|app|tap|swipe|scroll|keyboard|notification|settings app|facebook app|instagram app|messages app|sms)\b/.test(normalized)
     && !/\b(mac|desktop|pc|laptop|browser|terminal|repo|codebase)\b/.test(normalized);
+}
+
+function reasoningStreamEnabled(level: string | null | undefined): boolean | null {
+  if (!level) {
+    return null;
+  }
+  if (level === "stream") {
+    return true;
+  }
+  if (level === "off") {
+    return false;
+  }
+  return null;
 }

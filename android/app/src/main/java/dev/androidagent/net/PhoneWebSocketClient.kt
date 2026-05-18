@@ -218,6 +218,8 @@ class PhoneWebSocketClient(
             "chat.state",
             "chat.history",
             "chat.delta",
+            "chat.reasoning_delta",
+            "chat.reasoning_clear",
             "chat.final",
             "chat.error",
             "chat.tool_event",

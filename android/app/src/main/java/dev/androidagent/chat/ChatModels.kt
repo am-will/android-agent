@@ -6,7 +6,8 @@ import java.util.UUID
 
 enum class ChatTimelineKind {
     MESSAGE,
-    TOOL
+    TOOL,
+    REASONING
 }
 
 data class ChatTimelineItem(
@@ -17,6 +18,7 @@ data class ChatTimelineItem(
     val timestamp: Long? = null,
     val runId: String? = null,
     val isStreaming: Boolean = false,
+    val isClearing: Boolean = false,
     val toolEvent: ChatToolEvent? = null
 )
 
@@ -49,6 +51,7 @@ data class ChatSessionRow(
     val fastMode: Boolean?,
     val hasActiveRun: Boolean?,
     val thinkingLevel: String?,
+    val reasoningLevel: String?,
     val verboseLevel: String?
 )
 
@@ -82,6 +85,7 @@ data class ChatState(
     val error: String? = null,
     val selectedModel: String? = null,
     val reasoningEffort: String? = null,
+    val reasoningStreamEnabled: Boolean? = null,
     val fastMode: Boolean? = null,
     val verboseLevel: String? = null,
     val timeline: List<ChatTimelineItem> = emptyList(),
@@ -141,6 +145,8 @@ object ChatStateReducer {
         return when (message.optString("type")) {
             "chat.state" -> reduceState(state, message)
             "chat.history" -> reduceHistory(state, message)
+            "chat.reasoning_delta" -> reduceReasoningDelta(state, message)
+            "chat.reasoning_clear" -> reduceReasoningClear(state, message)
             "chat.delta" -> reduceDelta(state, message)
             "chat.final" -> reduceFinal(state, message)
             "chat.error" -> reduceError(state, message)
@@ -171,6 +177,7 @@ object ChatStateReducer {
             status = message.optNullableString("status") ?: state.status,
             selectedModel = message.optNullableString("model") ?: state.selectedModel,
             reasoningEffort = message.optNullableString("reasoningEffort") ?: state.reasoningEffort,
+            reasoningStreamEnabled = message.optNullableBoolean("reasoningStream") ?: state.reasoningStreamEnabled,
             fastMode = message.optNullableBoolean("fastMode") ?: state.fastMode,
             verboseLevel = message.optNullableString("verboseLevel") ?: state.verboseLevel,
             error = null
@@ -186,6 +193,41 @@ object ChatStateReducer {
         )
     }
 
+    private fun reduceReasoningDelta(state: ChatState, message: JSONObject): ChatState {
+        val runId = message.optNullableString("runId") ?: state.activeRunId ?: "active"
+        val sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey
+        val delta = message.optString("delta")
+        if (delta.isBlank()) return state
+        val replace = message.optBoolean("replace", false)
+        val itemId = "reasoning_$runId"
+        val existing = state.timeline.firstOrNull { it.id == itemId }
+        val nextText = if (replace || existing?.isClearing == true) delta else (existing?.text.orEmpty() + delta)
+        return state.copy(
+            sessionKey = sessionKey,
+            activeRunId = runId,
+            isRunning = true,
+            status = "OpenClaw is reasoning",
+            reasoningStreamEnabled = true,
+            timeline = upsertTimeline(state.timeline, ChatTimelineItem(
+                id = itemId,
+                kind = ChatTimelineKind.REASONING,
+                text = nextText,
+                runId = runId,
+                isStreaming = true,
+                isClearing = false
+            )),
+            error = null
+        )
+    }
+
+    private fun reduceReasoningClear(state: ChatState, message: JSONObject): ChatState {
+        val runId = message.optNullableString("runId")
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            timeline = markReasoningClearing(state.timeline, runId)
+        )
+    }
+
     private fun reduceDelta(state: ChatState, message: JSONObject): ChatState {
         val runId = message.optNullableString("runId") ?: state.activeRunId ?: "active"
         val sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey
@@ -194,12 +236,13 @@ object ChatStateReducer {
         val itemId = "assistant_$runId"
         val existing = state.timeline.firstOrNull { it.id == itemId }
         val nextText = if (replace) delta else (existing?.text.orEmpty() + delta)
+        val timeline = markReasoningClearing(state.timeline, runId)
         return state.copy(
             sessionKey = sessionKey,
             activeRunId = runId,
             isRunning = true,
             status = "OpenClaw is responding",
-            timeline = upsertTimeline(state.timeline, ChatTimelineItem(
+            timeline = upsertTimeline(timeline, ChatTimelineItem(
                 id = itemId,
                 kind = ChatTimelineKind.MESSAGE,
                 role = "assistant",
@@ -215,12 +258,13 @@ object ChatStateReducer {
         val runId = message.optNullableString("runId") ?: state.activeRunId ?: "final"
         val itemId = "assistant_$runId"
         val text = message.optString("text")
+        val timeline = markReasoningClearing(state.timeline, runId)
         return state.copy(
             sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
             activeRunId = null,
             isRunning = false,
             status = "OpenClaw finished",
-            timeline = upsertTimeline(state.timeline, ChatTimelineItem(
+            timeline = upsertTimeline(timeline, ChatTimelineItem(
                 id = itemId,
                 kind = ChatTimelineKind.MESSAGE,
                 role = "assistant",
@@ -234,13 +278,14 @@ object ChatStateReducer {
 
     private fun reduceError(state: ChatState, message: JSONObject): ChatState {
         val text = message.optString("message", "OpenClaw chat failed")
+        val runId = message.optNullableString("runId") ?: state.activeRunId
         return state.copy(
             sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
             activeRunId = null,
             isRunning = false,
             status = "OpenClaw failed",
             error = text,
-            timeline = state.timeline + ChatTimelineItem(
+            timeline = markReasoningClearing(state.timeline, runId) + ChatTimelineItem(
                 id = "error_${UUID.randomUUID()}",
                 kind = ChatTimelineKind.MESSAGE,
                 role = "system",
@@ -294,6 +339,7 @@ object ChatStateReducer {
             sessions = sessions,
             selectedModel = selected?.model ?: state.selectedModel,
             reasoningEffort = selected?.thinkingLevel ?: state.reasoningEffort,
+            reasoningStreamEnabled = selected?.reasoningLevel?.let(::reasoningStreamEnabled) ?: state.reasoningStreamEnabled,
             fastMode = selected?.fastMode ?: state.fastMode,
             verboseLevel = selected?.verboseLevel ?: state.verboseLevel,
             usage = selected?.let {
@@ -313,6 +359,16 @@ object ChatStateReducer {
         val index = timeline.indexOfFirst { it.id == item.id }
         if (index == -1) return timeline + item
         return timeline.toMutableList().also { it[index] = item }
+    }
+
+    private fun markReasoningClearing(timeline: List<ChatTimelineItem>, runId: String?): List<ChatTimelineItem> {
+        return timeline.map { item ->
+            if (item.kind == ChatTimelineKind.REASONING && !item.isClearing && (runId == null || item.runId == runId)) {
+                item.copy(isStreaming = false, isClearing = true)
+            } else {
+                item
+            }
+        }
     }
 
     private fun parseHistory(array: JSONArray?): List<ChatTimelineItem> {
@@ -355,6 +411,7 @@ object ChatStateReducer {
                     fastMode = item.optNullableBoolean("fastMode"),
                     hasActiveRun = item.optNullableBoolean("hasActiveRun"),
                     thinkingLevel = item.optNullableString("thinkingLevel"),
+                    reasoningLevel = item.optNullableString("reasoningLevel"),
                     verboseLevel = item.optNullableString("verboseLevel")
                 ))
             }
@@ -469,5 +526,9 @@ object ChatStateReducer {
     private fun JSONObject.optNullableBoolean(name: String): Boolean? {
         if (!has(name) || isNull(name)) return null
         return optBoolean(name)
+    }
+
+    private fun reasoningStreamEnabled(level: String): Boolean {
+        return level == "stream"
     }
 }

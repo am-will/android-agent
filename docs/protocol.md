@@ -147,6 +147,12 @@ Android can stop active chat work, switch or create sessions, update model/reaso
 { "type": "chat.control_command", "deviceId": "openclaw-agent", "command": "fast", "args": { "enabled": true } }
 ```
 
+```json
+{ "type": "chat.control_command", "deviceId": "openclaw-agent", "command": "reasoning", "args": { "level": "stream" } }
+```
+
+The Android `Reasoning Stream` toggle uses the `reasoning` control command to send OpenClaw's real `/reasoning stream` and `/reasoning off` session directives. This controls reasoning visibility in OpenClaw rather than only filtering Android UI locally.
+
 The bridge returns session state, history, metadata, stream deltas, final text, errors, and expandable tool events:
 
 ```json
@@ -159,6 +165,7 @@ The bridge returns session state, history, metadata, stream deltas, final text, 
   "status": "OpenClaw is working",
   "model": "gpt-5.5",
   "reasoningEffort": "high",
+  "reasoningStream": true,
   "fastMode": true
 }
 ```
@@ -182,6 +189,27 @@ The bridge returns session state, history, metadata, stream deltas, final text, 
   "sessionKey": "agent:main:explicit:open-claw-agent",
   "runId": "run_123",
   "delta": "Working"
+}
+```
+
+Reasoning stream deltas are temporary UI blocks. Android renders them while a run is reasoning, then removes them with an animated dissolve once real assistant output starts streaming or the final answer arrives:
+
+```json
+{
+  "type": "chat.reasoning_delta",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123",
+  "delta": "Inspecting the repository structure"
+}
+```
+
+```json
+{
+  "type": "chat.reasoning_clear",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123"
 }
 ```
 

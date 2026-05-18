@@ -100,6 +100,9 @@ class OverlayController(
     private var lastChatState = ChatState()
     private var historyContainer: LinearLayout? = null
     private var historyScrollView: ScrollView? = null
+    private val timelineViews = mutableMapOf<String, View>()
+    private val dissolvingTimelineIds = mutableSetOf<String>()
+    private val dismissedReasoningTimelineIds = mutableSetOf<String>()
     private var controlsSheetView: LinearLayout? = null
     private var composerContainer: LinearLayout? = null
     private var keyboardSpacerView: View? = null
@@ -687,30 +690,38 @@ class OverlayController(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = recessedInsetDrawable(palette, dp(22))
-            addView(controlGroupTitle("Controls", palette))
-            addView(controlButtonRow(palette, listOf(
-                "Fast on" to { onChatControlCommand("fast", JSONObject().put("enabled", true)) },
-                "Fast off" to { onChatControlCommand("fast", JSONObject().put("enabled", false)) },
-                "New" to { onNewChatSession() }
-            )))
-            addView(controlButtonRow(palette, listOf(
-                "Tools" to { showToolsControls() },
-                "Commands" to { showCommandControls() },
-                "Sessions" to { showSessionControls() }
-            )).apply { topMargin(dp(6)) })
-            addView(controlButtonRow(palette, listOf(
-                "Voice" to { onStartVoice() },
-                "Settings" to {
-                    dismissPanel()
-                    openSettings()
-                },
-                "Usage" to { showUsageControls() }
-            )).apply { topMargin(dp(6)) })
-            addView(controlButtonRow(palette, listOf(
-                "Queue steer" to { insertComposerText("/queue steer ") },
-                "Verbose" to { onChatControlCommand("verbose", JSONObject().put("level", "high")) }
-            )).apply { topMargin(dp(6)) })
+            populateControlsSheet(this, palette)
         }
+    }
+
+    private fun populateControlsSheet(sheet: LinearLayout, palette: OverlayPalette) {
+        sheet.addView(controlGroupTitle("Controls", palette))
+        sheet.addView(controlButtonRow(palette, listOf(
+            "Fast on" to { onChatControlCommand("fast", JSONObject().put("enabled", true)) },
+            "Fast off" to { onChatControlCommand("fast", JSONObject().put("enabled", false)) },
+            "New" to { onNewChatSession() }
+        )))
+        sheet.addView(controlButtonRow(palette, listOf(
+            "Tools" to { showToolsControls() },
+            "Commands" to { showCommandControls() },
+            "Sessions" to { showSessionControls() }
+        )).apply { topMargin(dp(6)) })
+        sheet.addView(controlGroupTitle("More", palette).apply { topMargin(dp(10)) })
+        sheet.addView(controlButtonRow(palette, listOf(
+            "Voice" to { onStartVoice() },
+            "Settings" to {
+                dismissPanel()
+                openSettings()
+            },
+            "Usage" to { showUsageControls() }
+        )).apply { topMargin(dp(6)) })
+        sheet.addView(controlButtonRow(palette, listOf(
+            "Queue steer" to { insertComposerText("/queue steer ") },
+            "Verbose" to { onChatControlCommand("verbose", JSONObject().put("level", "high")) }
+        )).apply { topMargin(dp(6)) })
+        sheet.addView(controlButtonRow(palette, listOf(
+            "Reasoning Stream: ${if (lastChatState.reasoningStreamEnabled == true) "On" else "Off"}" to { toggleReasoningStream() }
+        )).apply { topMargin(dp(6)) })
     }
 
     private fun View.topMargin(margin: Int): View {
@@ -755,6 +766,27 @@ class OverlayController(
         controlsSheetView?.let {
             it.visibility = if (it.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
+    }
+
+    private fun toggleReasoningStream() {
+        val enabled = lastChatState.reasoningStreamEnabled == true
+        val nextEnabled = !enabled
+        lastChatState = lastChatState.copy(
+            reasoningStreamEnabled = nextEnabled,
+            status = "Reasoning Stream: ${if (nextEnabled) "On" else "Off"}"
+        )
+        renderChatState(lastChatState)
+        onChatControlCommand("reasoning", JSONObject().put("level", if (nextEnabled) "stream" else "off"))
+        setStatus("Reasoning Stream: ${if (nextEnabled) "On" else "Off"}")
+        rebuildControlsSheet()
+    }
+
+    private fun rebuildControlsSheet() {
+        val sheet = controlsSheetView ?: return
+        val visibility = sheet.visibility
+        sheet.removeAllViews()
+        populateControlsSheet(sheet, overlayPalette())
+        sheet.visibility = visibility
     }
 
     private fun showModelChoices() {
@@ -872,21 +904,83 @@ class OverlayController(
     private fun renderTimeline(state: ChatState) {
         val container = historyContainer ?: return
         val palette = overlayPalette()
-        container.removeAllViews()
-        if (state.timeline.isEmpty()) {
+        val visibleItems = state.timeline.filterNot { item ->
+            item.kind == ChatTimelineKind.REASONING && item.isClearing && dismissedReasoningTimelineIds.contains(item.id)
+        }
+        val needsAnimatedRemoval = visibleItems.any { it.kind == ChatTimelineKind.REASONING && it.isClearing } || dissolvingTimelineIds.isNotEmpty()
+        if (!needsAnimatedRemoval) {
+            timelineViews.clear()
+            container.removeAllViews()
+        }
+        if (visibleItems.isEmpty()) {
             container.addView(emptyHistoryView(palette))
+        } else if (needsAnimatedRemoval) {
+            renderTimelineWithAnimatedRemoval(container, visibleItems, palette)
         } else {
-            state.timeline.forEach { item ->
-                container.addView(when (item.kind) {
-                    ChatTimelineKind.MESSAGE -> messageBubble(item, palette)
-                    ChatTimelineKind.TOOL -> toolRow(item, palette)
-                }, LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(8) })
+            visibleItems.forEach { item ->
+                val row = timelineRow(item, palette)
+                timelineViews[item.id] = row
+                container.addTimelineRow(row)
             }
         }
         historyScrollView?.post { historyScrollView?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun renderTimelineWithAnimatedRemoval(
+        container: LinearLayout,
+        visibleItems: List<ChatTimelineItem>,
+        palette: OverlayPalette
+    ) {
+        val desiredIds = visibleItems.map { it.id }.toSet()
+        timelineViews.entries.toList().forEach { (id, view) ->
+            if (id !in desiredIds && id !in dissolvingTimelineIds) {
+                container.removeView(view)
+                timelineViews.remove(id)
+            }
+        }
+        visibleItems.forEachIndexed { index, item ->
+            val row = if (item.kind == ChatTimelineKind.REASONING && item.isClearing) {
+                timelineViews[item.id] ?: timelineRow(item, palette).also { timelineViews[item.id] = it }
+            } else {
+                timelineRow(item, palette).also { replacement ->
+                    timelineViews.remove(item.id)?.let { existing ->
+                        if (existing.parent === container) {
+                            container.removeView(existing)
+                        }
+                    }
+                    timelineViews[item.id] = replacement
+                }
+            }
+
+            if (row.parent == null) {
+                container.addTimelineRow(row, index.coerceAtMost(container.childCount))
+            } else {
+                val currentIndex = container.indexOfChild(row)
+                if (currentIndex != index && currentIndex >= 0) {
+                    container.removeView(row)
+                    container.addTimelineRow(row, index.coerceAtMost(container.childCount))
+                }
+            }
+
+            if (item.kind == ChatTimelineKind.REASONING && item.isClearing && item.id !in dissolvingTimelineIds) {
+                animateReasoningDissolve(item.id, row)
+            }
+        }
+    }
+
+    private fun LinearLayout.addTimelineRow(row: View, index: Int = childCount) {
+        addView(row, index, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) })
+    }
+
+    private fun timelineRow(item: ChatTimelineItem, palette: OverlayPalette): View {
+        return when (item.kind) {
+            ChatTimelineKind.MESSAGE -> messageBubble(item, palette)
+            ChatTimelineKind.TOOL -> toolRow(item, palette)
+            ChatTimelineKind.REASONING -> reasoningBlock(item, palette)
+        }
     }
 
     private fun emptyHistoryView(palette: OverlayPalette): TextView {
@@ -929,6 +1023,61 @@ class OverlayController(
                 (context.resources.displayMetrics.widthPixels * 0.78f).toInt(),
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ))
+        }
+    }
+
+    private fun reasoningBlock(item: ChatTimelineItem, palette: OverlayPalette): LinearLayout {
+        return DissolvingReasoningLayout(context, palette.accent).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedDrawable(blend(palette.accent, palette.controlSurface, 0.16f), dp(18), withAlpha(palette.accent, 0x66))
+            backgroundTintList = null
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            addView(TextView(context).apply {
+                text = "Reasoning Stream"
+                textSize = 11f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(palette.accent)
+            })
+            addView(TextView(context).apply {
+                text = item.text.ifBlank { if (item.isStreaming) "..." else "" }
+                textSize = 13f
+                setTextColor(palette.primaryText)
+                setPadding(0, dp(5), 0, 0)
+                setLineSpacing(dp(2).toFloat(), 1.0f)
+            })
+        }
+    }
+
+    private fun animateReasoningDissolve(id: String, row: View) {
+        dissolvingTimelineIds.add(id)
+        row.post {
+            val startHeight = row.height.takeIf { it > 0 } ?: row.measuredHeight.takeIf { it > 0 } ?: dp(72)
+            val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 480L
+                interpolator = AccelerateInterpolator()
+                addUpdateListener { valueAnimator ->
+                    val progress = valueAnimator.animatedValue as Float
+                    (row as? DissolvingReasoningLayout)?.dissolveProgress = progress
+                    row.alpha = 1f - progress
+                    row.scaleX = 1f - (0.04f * progress)
+                    row.translationX = dp(18) * progress
+                    val params = row.layoutParams
+                    params.height = (startHeight * (1f - progress)).toInt().coerceAtLeast(0)
+                    if (params is LinearLayout.LayoutParams) {
+                        params.bottomMargin = (dp(8) * (1f - progress)).toInt().coerceAtLeast(0)
+                    }
+                    row.layoutParams = params
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        (row.parent as? LinearLayout)?.removeView(row)
+                        timelineViews.remove(id)
+                        dissolvingTimelineIds.remove(id)
+                        dismissedReasoningTimelineIds.add(id)
+                    }
+                })
+            }
+            animator.start()
         }
     }
 
@@ -1002,6 +1151,9 @@ class OverlayController(
         voiceHangupButton = null
         historyContainer = null
         historyScrollView = null
+        timelineViews.clear()
+        dissolvingTimelineIds.clear()
+        dismissedReasoningTimelineIds.clear()
         controlsSheetView = null
         composerContainer = null
         keyboardSpacerView = null
@@ -1892,5 +2044,38 @@ class OverlayController(
             (Color.green(start) * inverse + Color.green(end) * amount).toInt(),
             (Color.blue(start) * inverse + Color.blue(end) * amount).toInt()
         )
+    }
+
+    private class DissolvingReasoningLayout(context: Context, private val accentColor: Int) : LinearLayout(context) {
+        private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        var dissolveProgress: Float = 0f
+            set(value) {
+                field = value.coerceIn(0f, 1f)
+                invalidate()
+            }
+
+        init {
+            setWillNotDraw(false)
+        }
+
+        override fun dispatchDraw(canvas: Canvas) {
+            super.dispatchDraw(canvas)
+            if (dissolveProgress <= 0f || width <= 0 || height <= 0) {
+                return
+            }
+            particlePaint.color = accentColor
+            val alpha = ((1f - dissolveProgress) * 160).toInt().coerceIn(0, 160)
+            particlePaint.alpha = alpha
+            for (index in 0 until 34) {
+                val xSeed = ((index * 37) % 100) / 100f
+                val ySeed = ((index * 53) % 100) / 100f
+                val driftX = dissolveProgress * (18f + (index % 7) * 5f)
+                val driftY = dissolveProgress * (-10f + (index % 5) * 4f)
+                val x = width * xSeed + driftX
+                val y = height * ySeed + driftY
+                val radius = 1.3f + (index % 4) * 0.55f
+                canvas.drawCircle(x, y, radius, particlePaint)
+            }
+        }
     }
 }
