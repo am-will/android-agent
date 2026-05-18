@@ -102,6 +102,7 @@ class OverlayController(
     private var historyScrollView: ScrollView? = null
     private var controlsSheetView: LinearLayout? = null
     private var composerContainer: LinearLayout? = null
+    private var keyboardSpacerView: View? = null
     private var sendStopButton: ImageButton? = null
     private var modelButton: TextView? = null
     private var reasoningButton: TextView? = null
@@ -116,6 +117,7 @@ class OverlayController(
     private var restorePanelScrimAfterAutomation = false
     private var restorePanelFocusAfterAutomation = false
     private var restoreComposerFocusAfterAutomation = false
+    private var keyboardFallbackSuppressed = false
 
     private data class OverlayPalette(
         val surface: Int,
@@ -393,10 +395,14 @@ class OverlayController(
             text = lastChatState.status ?: "OpenClaw chat ready."
             textSize = 12f
             setTextColor(palette.secondaryText)
-            setPadding(dp(2), dp(8), dp(2), 0)
+            setPadding(dp(2), dp(4), dp(2), 0)
         }
         val voice = buildVoiceSurface(palette)
         val composer = buildComposer(palette, input)
+        val keyboardSpacer = View(context).apply {
+            visibility = View.GONE
+            keyboardSpacerView = this
+        }
         val voiceButton = iconButton(
             palette = palette,
             drawableRes = R.drawable.ic_voice_wave,
@@ -420,7 +426,7 @@ class OverlayController(
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             isFocusableInTouchMode = true
-            setPadding(0, dp(12), 0, 0)
+            setPadding(0, dp(8), 0, 0)
             background = recessedPanelDrawable(palette)
             elevation = dp(18).toFloat()
             setOnKeyListener { _, keyCode, event ->
@@ -433,7 +439,7 @@ class OverlayController(
             }
             addView(topActions, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(34)
+                dp(30)
             ))
             addView(voice)
             addView(historyScroll, LinearLayout.LayoutParams(
@@ -452,11 +458,15 @@ class OverlayController(
             addView(composer, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(8) })
+            ).apply { topMargin = dp(4) })
+            addView(keyboardSpacer, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0
+            ))
         }
 
         val display = context.resources.displayMetrics
-        val modalHeight = (display.heightPixels * CHAT_MODAL_HEIGHT_FRACTION).toInt()
+        val modalHeight = chatModalHeight(display.heightPixels)
         val params = overlayParams(
             width = display.widthPixels,
             height = modalHeight,
@@ -468,8 +478,11 @@ class OverlayController(
         }
         input.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
+                armKeyboardFallback()
                 mainHandler.postDelayed({ keepAboveKeyboard(panel, params) }, 300)
                 mainHandler.postDelayed({ keepAboveKeyboard(panel, params) }, 700)
+            } else {
+                restorePanelDefaultSize(panel, params)
             }
         }
         val scrim = View(context).apply {
@@ -501,8 +514,11 @@ class OverlayController(
         return object : EditText(context) {
             override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
                 if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                    dismissPanel()
-                    return true
+                    suppressKeyboardFallback()
+                    panelView?.let { panel ->
+                        panelParams?.let { params -> restorePanelDefaultSize(panel, params) }
+                    }
+                    clearFocus()
                 }
                 return super.onKeyPreIme(keyCode, event)
             }
@@ -510,13 +526,21 @@ class OverlayController(
             hint = "Message OpenClaw"
             minLines = 2
             maxLines = 4
-            minHeight = dp(74)
+            minHeight = dp(62)
             textSize = 15f
             setTextColor(palette.primaryText)
             setHintTextColor(palette.secondaryText)
             background = null
             backgroundTintList = null
-            setPadding(dp(14), dp(13), dp(14), dp(10))
+            setPadding(dp(14), dp(8), dp(14), dp(6))
+            setOnClickListener {
+                armKeyboardFallback()
+                panelView?.let { panel ->
+                    panelParams?.let { params ->
+                        mainHandler.postDelayed({ keepAboveKeyboard(panel, params) }, 300)
+                    }
+                }
+            }
             composerInput = this
         }
     }
@@ -525,7 +549,7 @@ class OverlayController(
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(8), dp(8))
+            setPadding(dp(8), 0, dp(8), dp(6))
         }
 
         controls.addView(iconButton(
@@ -976,6 +1000,7 @@ class OverlayController(
         historyScrollView = null
         controlsSheetView = null
         composerContainer = null
+        keyboardSpacerView = null
         sendStopButton = null
         modelButton = null
         reasoningButton = null
@@ -1503,6 +1528,8 @@ class OverlayController(
         private const val VOICE_PULSE_MS = 720L
         private const val VOICE_MODAL_MAX_SCREEN_FRACTION = 0.40f
         private const val CHAT_MODAL_HEIGHT_FRACTION = 0.82f
+        private const val KEYBOARD_HEIGHT_ESTIMATE_FRACTION = 0.485f
+        private const val KEYBOARD_COMPOSER_GAP_DP = 4
         private const val VOICE_GLOW_RED = 0xFFE53935.toInt()
         private const val VOICE_GLOW_RED_CENTER = 0xF2FF453A.toInt()
         private const val VOICE_GLOW_RED_MID = 0xB3FF453A.toInt()
@@ -1621,34 +1648,90 @@ class OverlayController(
     }
 
     private fun positionPanelAboveKeyboard(panel: View, params: WindowManager.LayoutParams) {
-        val visible = Rect()
-        panel.getWindowVisibleDisplayFrame(visible)
         val displayHeight = context.resources.displayMetrics.heightPixels
         val imeHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             panel.rootWindowInsets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
         } else {
             0
         }
-        val visibleKeyboardHeight = (displayHeight - visible.bottom).coerceAtLeast(0)
-        val keyboardHeight = imeHeight.coerceAtLeast(visibleKeyboardHeight)
-        val defaultY = displayHeight - params.height
+        val keyboardHeight = if (imeHeight >= dp(120)) {
+            keyboardFallbackSuppressed = false
+            imeHeight
+        } else if (composerInput?.hasFocus() == true && isKeyboardFallbackActive()) {
+            estimatedKeyboardHeight(displayHeight)
+        } else {
+            0
+        }
+        val defaultHeight = chatModalHeight(displayHeight)
+        val defaultY = displayHeight - defaultHeight
         if (keyboardHeight < dp(120)) {
-            panel.animate().cancel()
-            panel.translationY = 0f
-            if (params.y != defaultY) {
-                params.y = defaultY
-                windowManager.updateViewLayout(panel, params)
-            }
+            restorePanelDefaultSize(panel, params)
             return
         }
 
-        val keyboardTop = displayHeight - keyboardHeight
-        val desiredY = keyboardTop - params.height
         panel.translationY = 0f
-        if (params.y != desiredY) {
+        setKeyboardSpacerHeight(0)
+        val keyboardTop = displayHeight - keyboardHeight
+        val minPanelHeight = dp(300)
+        val desiredY = defaultY.coerceAtMost((keyboardTop - minPanelHeight).coerceAtLeast(dp(8)))
+        val desiredHeight = (keyboardTop - desiredY - dp(KEYBOARD_COMPOSER_GAP_DP)).coerceAtLeast(dp(240))
+        if (params.height != desiredHeight || params.y != desiredY) {
+            params.height = desiredHeight
             params.y = desiredY
             windowManager.updateViewLayout(panel, params)
         }
+    }
+
+    private fun armKeyboardFallback() {
+        keyboardFallbackSuppressed = false
+    }
+
+    private fun suppressKeyboardFallback() {
+        keyboardFallbackSuppressed = true
+    }
+
+    private fun isKeyboardFallbackActive(): Boolean {
+        return !keyboardFallbackSuppressed
+    }
+
+    private fun restorePanelDefaultSize(panel: View, params: WindowManager.LayoutParams) {
+        val displayHeight = context.resources.displayMetrics.heightPixels
+        val defaultHeight = chatModalHeight(displayHeight)
+        val defaultY = displayHeight - defaultHeight
+        panel.animate().cancel()
+        panel.translationY = 0f
+        setKeyboardSpacerHeight(0)
+        if (params.height != defaultHeight || params.y != defaultY) {
+            params.height = defaultHeight
+            params.y = defaultY
+            windowManager.updateViewLayout(panel, params)
+        }
+    }
+
+    private fun setKeyboardSpacerHeight(height: Int) {
+        val spacer = keyboardSpacerView ?: return
+        val nextHeight = height.coerceAtLeast(0)
+        if (nextHeight == 0) {
+            if (spacer.visibility != View.GONE) {
+                spacer.visibility = View.GONE
+            }
+        } else if (spacer.visibility != View.VISIBLE) {
+            spacer.visibility = View.VISIBLE
+        }
+        val params = spacer.layoutParams
+        if (params.height != nextHeight) {
+            params.height = nextHeight
+            spacer.layoutParams = params
+        }
+    }
+
+    private fun chatModalHeight(displayHeight: Int): Int {
+        return (displayHeight * CHAT_MODAL_HEIGHT_FRACTION).toInt()
+    }
+
+    private fun estimatedKeyboardHeight(displayHeight: Int): Int {
+        return (displayHeight * KEYBOARD_HEIGHT_ESTIMATE_FRACTION).toInt()
+            .coerceIn(dp(260), (displayHeight * 0.42f).toInt())
     }
 
     private fun overlayPalette(): OverlayPalette {
