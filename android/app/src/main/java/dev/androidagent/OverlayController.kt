@@ -879,6 +879,30 @@ class OverlayController(
         showAnchoredPicker(anchor, "Model", listOf(AnchoredPicker.Section(null, rows)))
     }
 
+    private fun isAgentInternalTool(id: String, label: String?): Boolean {
+        val needle = (label ?: id).lowercase().trim()
+        val rawId = id.lowercase().trim()
+        val hiddenExact = setOf(
+            "apply_patch", "apply-patch", "applypatch",
+            "exec",
+            "edit",
+            "process",
+            "read",
+            "session_history", "session-history", "sessionhistory",
+            "send",
+            "status"
+        )
+        if (rawId in hiddenExact || needle in hiddenExact) return true
+        val hiddenPrefixes = listOf(
+            "apply patch",
+            "apply_patch",
+            "session history",
+            "session_history"
+        )
+        if (hiddenPrefixes.any { needle.startsWith(it) || rawId.startsWith(it) }) return true
+        return false
+    }
+
     private fun mergeModelOptions(gatewayModels: List<ChatModelOption>): List<ChatModelOption> {
         val byId = linkedMapOf<String, ChatModelOption>()
         AgentModelOptions.models.forEach { local ->
@@ -949,8 +973,9 @@ class OverlayController(
         }
 
         val toolRows = mutableListOf<AnchoredPicker.Row>()
-        if (tools.isNotEmpty()) {
-            tools.take(8).forEach { tool ->
+        val visibleTools = tools.filterNot { isAgentInternalTool(it.id, it.label) }
+        if (visibleTools.isNotEmpty()) {
+            visibleTools.take(8).forEach { tool ->
                 toolRows.add(AnchoredPicker.Row(
                     label = tool.label ?: tool.id,
                     sublabel = tool.description?.take(64),
