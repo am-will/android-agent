@@ -52,9 +52,12 @@ class AnchoredPicker(
     private var hostRef: FrameLayout? = null
     private var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
     private var onDismissCallback: (() -> Unit)? = null
+    private var currentAnchor: View? = null
 
     val isShowing: Boolean
         get() = sheetView != null
+
+    fun isShowingFor(anchor: View): Boolean = sheetView != null && currentAnchor === anchor
 
     fun show(
         host: FrameLayout,
@@ -65,6 +68,7 @@ class AnchoredPicker(
     ) {
         dismiss()
         hostRef = host
+        currentAnchor = anchor
         onDismissCallback = onDismiss
 
         val scrim = View(context).apply {
@@ -125,6 +129,7 @@ class AnchoredPicker(
         hostRef = null
         sheetView = null
         scrimView = null
+        currentAnchor = null
         onDismissCallback = null
         preDrawListener?.let {
             sheet?.viewTreeObserver?.removeOnPreDrawListener(it)

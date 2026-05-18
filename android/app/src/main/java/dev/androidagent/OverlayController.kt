@@ -844,7 +844,12 @@ class OverlayController(
 
     private fun showAnchoredPicker(anchor: View, title: String, sections: List<AnchoredPicker.Section>) {
         val host = panelHost ?: return
-        ensurePicker().show(host, anchor, title, sections)
+        val picker = ensurePicker()
+        if (picker.isShowingFor(anchor)) {
+            picker.dismiss()
+            return
+        }
+        picker.show(host, anchor, title, sections)
     }
 
     private fun showModelChoices() {
