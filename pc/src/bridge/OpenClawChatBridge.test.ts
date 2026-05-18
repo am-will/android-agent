@@ -1,0 +1,180 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { OpenClawChatBridge } from "./OpenClawChatBridge.js";
+import type { BridgeConfig } from "./config.js";
+import type { PhoneHub } from "./PhoneHub.js";
+import type { ChatOutboundMessage } from "../protocol/messages.js";
+import type { GatewayEvent, GatewayEventHandler } from "./OpenClawGatewayChatClient.js";
+
+const config: BridgeConfig = {
+  host: "127.0.0.1",
+  port: 8788,
+  token: "token",
+  defaultDeviceId: "pixel",
+  bridgeUrl: "http://127.0.0.1:8788",
+  openClawGatewayUrl: "ws://127.0.0.1:18789",
+  openClawChatAgentId: "main",
+  openClawChatSessionKey: "agent:main:explicit:open-claw-agent",
+  openAiRealtimeModel: "gpt-realtime-2",
+  openAiRealtimeVoice: "marin",
+  openAiWebSearchModel: "gpt-5.5"
+};
+
+class FakeGatewayClient {
+  readonly handlers = new Set<GatewayEventHandler>();
+  readonly sent: Array<{ sessionKey: string; message: string; idempotencyKey?: string }> = [];
+  readonly created: Array<{ key?: string; label?: string; model?: string }> = [];
+  readonly aborted: Array<{ sessionKey: string; runId?: string }> = [];
+  private runCount = 0;
+
+  addEventListener(handler: GatewayEventHandler): () => void {
+    this.handlers.add(handler);
+    return () => this.handlers.delete(handler);
+  }
+
+  async history(sessionKey: string): Promise<unknown> {
+    return { sessionId: `${sessionKey}:id`, messages: [] };
+  }
+
+  async sendChat(options: { sessionKey: string; message: string; idempotencyKey?: string }): Promise<{ runId: string; sessionKey: string }> {
+    this.runCount += 1;
+    this.sent.push(options);
+    return { runId: `run_${this.runCount}`, sessionKey: options.sessionKey };
+  }
+
+  async abort(sessionKey: string, runId?: string): Promise<unknown> {
+    this.aborted.push({ sessionKey, runId });
+    return { ok: true };
+  }
+
+  async listModels(): Promise<unknown> {
+    return { models: [] };
+  }
+
+  async listSessions(): Promise<unknown> {
+    return { sessions: [] };
+  }
+
+  async createSession(options: { key?: string; label?: string; model?: string }): Promise<unknown> {
+    this.created.push(options);
+    return { key: `agent:main:explicit:${options.key ?? "created"}`, sessionId: `session_${this.created.length}` };
+  }
+
+  async patchSession(): Promise<unknown> {
+    return { ok: true };
+  }
+
+  async listCommands(): Promise<unknown> {
+    return { commands: [] };
+  }
+
+  async effectiveTools(): Promise<unknown> {
+    return { groups: [] };
+  }
+
+  close(): void {}
+
+  emit(event: GatewayEvent): void {
+    for (const handler of this.handlers) {
+      handler(event);
+    }
+  }
+}
+
+function createHarness() {
+  const chatMessages: ChatOutboundMessage[] = [];
+  const hub = {
+    sendChat(_deviceId: string, message: ChatOutboundMessage) {
+      chatMessages.push(message);
+    }
+  } as unknown as PhoneHub;
+  const dispatcher = {
+    async handleUserRequest() {
+      return { finalMessage: "fallback" };
+    },
+    async stopActiveTurn() {}
+  };
+  const client = new FakeGatewayClient();
+  const bridge = new OpenClawChatBridge(config, hub, dispatcher, undefined, client);
+  return { bridge, chatMessages, client };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.ok(predicate());
+}
+
+test("realtime requests start a fresh chat only outside the reuse window", async () => {
+  const originalNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+  try {
+    const { bridge, chatMessages, client } = createHarness();
+
+    const first = bridge.handleRealtimeRequest({
+      type: "user_request",
+      deviceId: "pixel",
+      inputType: "text",
+      text: "Summarize my project"
+    }, { taskKind: "general", callId: "call_1" });
+    await waitFor(() => client.sent.length === 1);
+    client.emit({ event: "chat", payload: { sessionKey: client.sent[0]?.sessionKey, runId: "run_1", state: "final", message: "Done one" } });
+    assert.deepEqual(await first, { finalMessage: "Done one" });
+
+    now += 14 * 60 * 1000;
+    const second = bridge.handleRealtimeRequest({
+      type: "user_request",
+      deviceId: "pixel",
+      inputType: "text",
+      text: "Add one more detail"
+    }, { taskKind: "general", callId: "call_2" });
+    await waitFor(() => client.sent.length === 2);
+    client.emit({ event: "chat", payload: { sessionKey: client.sent[1]?.sessionKey, runId: "run_2", state: "final", message: "Done two" } });
+    assert.deepEqual(await second, { finalMessage: "Done two" });
+
+    now += 16 * 60 * 1000;
+    const third = bridge.handleRealtimeRequest({
+      type: "user_request",
+      deviceId: "pixel",
+      inputType: "text",
+      text: "Start fresh"
+    }, { taskKind: "general", callId: "call_3" });
+    await waitFor(() => client.sent.length === 3);
+    client.emit({ event: "chat", payload: { sessionKey: client.sent[2]?.sessionKey, runId: "run_3", state: "final", message: "Done three" } });
+    assert.deepEqual(await third, { finalMessage: "Done three" });
+
+    assert.equal(client.created.length, 2);
+    assert.deepEqual(
+      chatMessages.filter((message) => message.type === "chat.message").map((message) => message.message.text),
+      ["Summarize my project", "Add one more detail", "Start fresh"]
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("realtime steer and stop are visible user messages on the active chat", async () => {
+  const { bridge, chatMessages, client } = createHarness();
+  const request = bridge.handleRealtimeRequest({
+    type: "user_request",
+    deviceId: "pixel",
+    inputType: "text",
+    text: "Open settings"
+  }, { taskKind: "phone", callId: "call_1" });
+  await waitFor(() => client.sent.length === 1);
+
+  await bridge.steerRealtimeTurn("pixel", "Actually open Bluetooth settings", { taskKind: "phone", callId: "call_steer" });
+  await bridge.stopRealtimeTurn("pixel", "Stop the realtime task");
+  await assert.rejects(request, /Stop the realtime task/);
+
+  assert.equal(client.aborted.length, 1);
+  assert.deepEqual(
+    chatMessages.filter((message) => message.type === "chat.message").map((message) => message.message.text),
+    ["Open settings", "Actually open Bluetooth settings", "Stop the realtime task"]
+  );
+});
