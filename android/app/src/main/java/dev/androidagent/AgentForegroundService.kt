@@ -19,6 +19,8 @@ import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatStateReducer
+import dev.androidagent.chat.ChatTimelineItem
+import dev.androidagent.chat.ChatTimelineKind
 import dev.androidagent.chat.ChatUsageSummary
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
@@ -63,20 +65,7 @@ class AgentForegroundService : Service() {
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() },
             onSelectChatSession = { sessionKey -> webSocketClient?.sendChatSelectSession(sessionKey) },
-            onNewChatSession = {
-                chatState = chatState.copy(
-                    sessionKey = null,
-                    sessionId = null,
-                    activeRunId = null,
-                    isRunning = false,
-                    status = "Started a new chat",
-                    error = null,
-                    timeline = emptyList(),
-                    usage = ChatUsageSummary()
-                )
-                overlayController?.setChatState(chatState)
-                webSocketClient?.sendChatNewSession()
-            },
+            onNewChatSession = { startNewChatFromUi() },
             onSetChatModel = { model -> webSocketClient?.sendChatSetModel(chatState.sessionKey, model) },
             onSetChatReasoning = { reasoning -> webSocketClient?.sendChatSetReasoning(chatState.sessionKey, reasoning) },
             onChatControlCommand = { command, args -> webSocketClient?.sendChatControlCommand(command, args) },
@@ -153,6 +142,9 @@ class AgentForegroundService : Service() {
 
     private fun submitChatText(text: String): Boolean {
         connectWebSocket()
+        if (text.trimStart().startsWith("/")) {
+            return submitSlashCommand(text)
+        }
         chatState = ChatStateReducer.localUserMessage(chatState, text)
         overlayController?.setChatState(chatState)
         val sent = webSocketClient?.sendChatMessage(
@@ -168,6 +160,55 @@ class AgentForegroundService : Service() {
         }
         updateNotification()
         return sent
+    }
+
+    private fun submitSlashCommand(text: String): Boolean {
+        val slashText = text.trim()
+        val command = slashText.removePrefix("/").substringBefore(' ').trim()
+        if (command.isBlank()) {
+            return false
+        }
+        if (command == "new") {
+            startNewChatFromUi()
+            return true
+        }
+
+        chatState = ChatStateReducer.localUserMessage(chatState, slashText).copy(
+            status = "Running $slashText"
+        )
+        overlayController?.setChatState(chatState)
+        webSocketClient?.sendChatControlCommand(slashText, JSONObject())
+        lastNotificationText = "Running $slashText"
+        isAgentTurnActive = command != "status"
+        updateNotification()
+        return true
+    }
+
+    private fun startNewChatFromUi() {
+        val now = System.currentTimeMillis()
+        chatState = chatState.copy(
+            sessionKey = null,
+            sessionId = null,
+            activeRunId = null,
+            isRunning = false,
+            status = "Started a new chat",
+            error = null,
+            timeline = listOf(
+                ChatTimelineItem(
+                    id = "local_new_$now",
+                    kind = ChatTimelineKind.MESSAGE,
+                    role = "system",
+                    text = "Started a new chat.",
+                    timestamp = now
+                )
+            ),
+            usage = ChatUsageSummary()
+        )
+        overlayController?.setChatState(chatState)
+        webSocketClient?.sendChatNewSession()
+        lastNotificationText = "Started a new chat"
+        isAgentTurnActive = false
+        updateNotification()
     }
 
     private fun handleChatMessage(message: JSONObject) {

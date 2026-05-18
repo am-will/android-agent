@@ -144,7 +144,19 @@ export class OpenClawChatBridge {
 
   async newSession(message: ChatNewSessionMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
-    await this.sendSlashCommand(message.deviceId, "/new", state.sessionKey, "Creating new session");
+    const requestKey = `phone-${message.deviceId}-${randomUUID()}`;
+    const created = await this.client.createSession({
+      key: requestKey,
+      label: message.label ?? "Open Claw Agent",
+      model: message.model ?? state.model ?? undefined
+    });
+    const record = created && typeof created === "object" ? created as Record<string, unknown> : {};
+    const key = typeof record.key === "string" && record.key.trim() ? record.key.trim() : undefined;
+    state.sessionKey = key ?? `agent:${this.config.openClawChatAgentId}:explicit:${requestKey}`;
+    state.sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
+    state.runId = null;
+    this.sendState(message.deviceId, "Started a new chat");
+    await this.refreshDevice(message.deviceId);
   }
 
   async setModel(message: ChatSetModelMessage): Promise<void> {
@@ -167,14 +179,31 @@ export class OpenClawChatBridge {
     if (!command) {
       return;
     }
+    const normalized = command.startsWith("/") ? command.slice(1).trim() : command;
+    const name = normalized.split(/\s+/, 1)[0] ?? "";
 
-    if (command === "fast") {
+    if (name === "new") {
+      await this.newSession({
+        type: "chat.new_session",
+        deviceId: message.deviceId
+      });
+      return;
+    }
+
+    if (name === "status") {
+      this.sendState(message.deviceId, "Refreshing status");
+      await this.refreshDevice(message.deviceId);
+      this.sendState(message.deviceId, "Status refreshed");
+      return;
+    }
+
+    if (name === "fast") {
       const enabled = typeof message.args.enabled === "boolean" ? message.args.enabled : undefined;
       await this.sendSlashCommand(message.deviceId, `/fast ${enabled === false ? "off" : "on"}`, state.sessionKey, "Updating fast mode");
       return;
     }
 
-    if (command === "verbose") {
+    if (name === "verbose") {
       const level = typeof message.args.level === "string" && message.args.level.trim() ? message.args.level.trim() : "on";
       await this.sendSlashCommand(message.deviceId, `/verbose ${level}`, state.sessionKey, "Updating verbosity");
       return;

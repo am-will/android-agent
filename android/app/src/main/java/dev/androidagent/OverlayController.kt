@@ -167,6 +167,7 @@ class OverlayController(
             onDragEnd = { dragParams, dragView ->
                 val shouldDismiss = updateTrashTargetState(dragParams, dragView)
                 if (shouldDismiss) {
+                    dismissPanel(cancelTranscription = false)
                     animateBubbleDismiss(dragView)
                 } else {
                     hideTrashTarget()
@@ -784,7 +785,9 @@ class OverlayController(
             drawableRes = R.drawable.ic_plus,
             contentDescription = "Open chat controls",
             compact = true
-        ) { showPlusMenu() }
+        ) { showPlusMenu() }.apply {
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
         controls.addView(plusButton, LinearLayout.LayoutParams(controlSize, controlSize).apply { rightMargin = controlGap })
 
         modelButton = compactPill(tokens, "Model", R.drawable.ic_model).apply {
@@ -1069,7 +1072,7 @@ class OverlayController(
         setStatus("Reasoning: ${next.label}")
     }
 
-    private fun showPlusMenu() {
+    private fun showPlusMenu(replace: Boolean = false) {
         val plusAnchor: View = plusButton ?: panelContent ?: panelHost ?: return
 
         val sessions = lastChatState.sessions
@@ -1116,10 +1119,14 @@ class OverlayController(
                 sublabel = if (fastModeOn) "Tap to turn off" else "Tap to turn on",
                 iconRes = R.drawable.ic_bolt,
                 selected = fastModeOn,
+                dismissOnSelect = false,
                 onSelect = {
                     val nextEnabled = !fastModeOn
+                    lastChatState = lastChatState.copy(fastMode = nextEnabled, status = if (nextEnabled) "Fast mode enabled" else "Fast mode disabled")
+                    renderChatState(lastChatState)
                     onChatControlCommand("fast", JSONObject().put("enabled", nextEnabled))
                     setStatus(if (nextEnabled) "Fast mode enabled" else "Fast mode disabled")
+                    showPlusMenu(replace = true)
                 }
             ),
             AnchoredPicker.Row(
@@ -1141,10 +1148,12 @@ class OverlayController(
                 sublabel = if (showToolCalls) "Tap to hide bash, MCP, web search, and other tool activity" else "Tap to show tool activity",
                 iconRes = R.drawable.ic_tools,
                 selected = showToolCalls,
+                dismissOnSelect = false,
                 onSelect = {
                     showToolCalls = !showToolCalls
                     setStatus("Tool calls ${if (showToolCalls) "shown" else "hidden"}")
                     renderTimeline(lastChatState)
+                    showPlusMenu(replace = true)
                 }
             ),
             AnchoredPicker.Row(
@@ -1179,7 +1188,7 @@ class OverlayController(
         sections.add(AnchoredPicker.Section("Run mode", modeRows))
         sections.add(AnchoredPicker.Section("More", voiceRows))
 
-        showAnchoredPicker(plusAnchor, "Menu", sections)
+        showAnchoredPicker(plusAnchor, "Menu", sections, toggleSameAnchor = !replace)
     }
 
     private fun showSessionsMenu() {
@@ -1336,26 +1345,19 @@ class OverlayController(
             contentDescription = if (state.isRunning) "Stop OpenClaw turn" else "Send message"
         }
         modelButton?.let { btn ->
+            val fastModeOn = state.fastMode == true
             btn.text = formatModelLabel(state.selectedModel ?: state.models.firstOrNull()?.id)
+            btn.setTextColor(if (fastModeOn) tokens.accent else tokens.primaryText)
             val chevron = androidx.core.content.ContextCompat
                 .getDrawable(context, R.drawable.ic_chevron_down)?.mutate()?.apply {
                     setTint(tokens.secondaryText)
                     setBounds(0, 0, dp(12), dp(12))
                 }
-            val left = if (state.fastMode == true) {
-                Drawables.horizontalIconPair(
-                    context = context,
-                    leftRes = R.drawable.ic_model,
-                    rightRes = R.drawable.ic_bolt,
-                    tint = tokens.accent
-                )
-            } else {
-                androidx.core.content.ContextCompat
-                    .getDrawable(context, R.drawable.ic_model)?.mutate()?.apply {
-                        setTint(tokens.secondaryText)
-                        setBounds(0, 0, dp(14), dp(14))
-                    }
-            }
+            val left = androidx.core.content.ContextCompat
+                .getDrawable(context, R.drawable.ic_model)?.mutate()?.apply {
+                    setTint(if (fastModeOn) tokens.accent else tokens.secondaryText)
+                    setBounds(0, 0, dp(14), dp(14))
+                }
             btn.setCompoundDrawables(left, null, chevron, null)
         }
         reasoningButton?.text = formatReasoningLabel(state.reasoningEffort)
@@ -1739,7 +1741,7 @@ class OverlayController(
             voiceSurfaceForceHidden = false
         }
         val shouldShow = !voiceSurfaceForceHidden &&
-            (state.isActive || state.status == VoiceRuntimeStatus.ERROR || state.transcript.isNotBlank())
+            (state.isActive || state.status == VoiceRuntimeStatus.ERROR)
         voiceSurface?.visibility = if (shouldShow) View.VISIBLE else View.GONE
         voiceStatusText?.text = buildString {
             append("Voice: ")
@@ -1813,10 +1815,10 @@ class OverlayController(
         bubble.elevation = if (state.status == VoiceRuntimeStatus.IDLE) dp(DesignTokens.Elevation.mid).toFloat() else dp(DesignTokens.Elevation.popover + 6).toFloat()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val shadowColor = when (state.status) {
-                VoiceRuntimeStatus.LISTENING -> tokens.success
-                VoiceRuntimeStatus.CONNECTING,
+                VoiceRuntimeStatus.LISTENING,
                 VoiceRuntimeStatus.THINKING,
-                VoiceRuntimeStatus.SPEAKING,
+                VoiceRuntimeStatus.SPEAKING -> tokens.success
+                VoiceRuntimeStatus.CONNECTING,
                 VoiceRuntimeStatus.ERROR -> tokens.danger
                 VoiceRuntimeStatus.IDLE -> Color.TRANSPARENT
             }
@@ -1828,14 +1830,14 @@ class OverlayController(
 
     private fun bubbleBackgroundForVoiceState(state: VoiceRuntimeState, tokens: ThemeTokens): GradientDrawable {
         return when (state.status) {
-            VoiceRuntimeStatus.LISTENING -> Drawables.bubbleHalo(
+            VoiceRuntimeStatus.LISTENING,
+            VoiceRuntimeStatus.THINKING,
+            VoiceRuntimeStatus.SPEAKING -> Drawables.bubbleHalo(
                 context,
                 centerColor = DesignTokens.withAlpha(tokens.success, 0xE6),
                 midColor = DesignTokens.withAlpha(tokens.success, 0x88)
             )
             VoiceRuntimeStatus.CONNECTING,
-            VoiceRuntimeStatus.THINKING,
-            VoiceRuntimeStatus.SPEAKING,
             VoiceRuntimeStatus.ERROR -> Drawables.bubbleHalo(
                 context,
                 centerColor = DesignTokens.withAlpha(tokens.danger, 0xE6),
