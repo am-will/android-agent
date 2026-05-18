@@ -33,8 +33,13 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.Space
 import android.widget.TextView
+import dev.androidagent.chat.ChatTimelineKind
 import dev.androidagent.chat.ChatState
+import dev.androidagent.chat.ChatTimelineItem
+import org.json.JSONObject
 import dev.androidagent.voice.VoiceRuntimeState
 import dev.androidagent.voice.VoiceRuntimeStatus
 import dev.androidagent.voice.transcription.VoiceTranscriptionState
@@ -51,7 +56,13 @@ class OverlayController(
     private val onStopVoice: () -> Unit,
     private val onStartTranscription: () -> Unit,
     private val onStopTranscription: () -> Unit,
-    private val onCancelTranscription: () -> Unit
+    private val onCancelTranscription: () -> Unit,
+    private val onSelectChatSession: (String) -> Unit = {},
+    private val onNewChatSession: () -> Unit = {},
+    private val onSetChatModel: (String) -> Unit = {},
+    private val onSetChatReasoning: (String) -> Unit = {},
+    private val onChatControlCommand: (String, JSONObject) -> Unit = { _, _ -> },
+    private val onToggleChatTool: (String) -> Unit = {}
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -80,6 +91,13 @@ class OverlayController(
     private var voiceHangupButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
     private var lastChatState = ChatState()
+    private var historyContainer: LinearLayout? = null
+    private var historyScrollView: ScrollView? = null
+    private var controlsSheetView: LinearLayout? = null
+    private var sendStopButton: Button? = null
+    private var modelButton: Button? = null
+    private var reasoningButton: Button? = null
+    private var contextUsageButton: Button? = null
     private var composerInput: EditText? = null
     private var transcriptionMicButton: ImageButton? = null
     private var transcriptionCancelButton: Button? = null
@@ -201,6 +219,7 @@ class OverlayController(
     fun setChatState(state: ChatState) {
         lastChatState = state
         mainHandler.post {
+            renderChatState(state)
             state.status?.let { setStatus(it) }
             state.error?.let { setStatus(it) }
         }
@@ -324,156 +343,89 @@ class OverlayController(
         }
 
         val palette = overlayPalette()
-
-        val input = EditText(context).apply {
-            hint = "Ask Codex to control this phone"
-            minLines = 1
-            maxLines = 4
-            textSize = 14f
-            setTextColor(palette.primaryText)
-            setHintTextColor(palette.secondaryText)
-            background = controlDrawable(palette)
+        val input = buildComposerInput(palette)
+        val history = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(2), dp(2), dp(10))
+        }
+        historyContainer = history
+        val historyScroll = ScrollView(context).apply {
+            isFillViewport = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(history)
+        }
+        historyScrollView = historyScroll
+        val voiceButton = ImageButton(context).apply {
+            setImageResource(R.drawable.ic_voice_wave)
+            background = controlDrawable(palette, dp(18))
             backgroundTintList = null
-            setPadding(dp(15), dp(11), dp(15), dp(11))
-        }
-        composerInput = input
-        transcriptionMicButton = ImageButton(context).apply {
-            setImageResource(R.drawable.ic_mic)
-            background = accentDrawable(palette, dp(18))
-            backgroundTintList = null
-            contentDescription = "Start voice transcription"
-            setColorFilter(Color.WHITE)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            setOnClickListener {
-                if (lastTranscriptionState.isRecording) {
-                    onStopTranscription()
-                } else {
-                    onStartTranscription()
-                }
-            }
-        }
-        transcriptionCancelButton = Button(context).apply {
-            text = "Cancel"
-            textSize = 11f
-            isAllCaps = false
-            visibility = View.GONE
-            setTextColor(palette.primaryText)
-            background = controlDrawable(palette)
-            backgroundTintList = null
-            setOnClickListener { onCancelTranscription() }
-        }
-        val composerRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(input, LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply { rightMargin = dp(8) })
-            addView(transcriptionMicButton, LinearLayout.LayoutParams(dp(44), dp(44)))
-            addView(transcriptionCancelButton, LinearLayout.LayoutParams(dp(72), dp(44)).apply { leftMargin = dp(8) })
-        }
-        statusText = TextView(context).apply {
-            text = "Connected. Ready for a new request."
-            textSize = 12f
-            setTextColor(palette.secondaryText)
-            setPadding(0, dp(10), 0, 0)
-        }
-        val actionRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-        }
-        actionRow.addView(Button(context).apply {
-            text = "Stop"
-            isAllCaps = false
-            setTextColor(palette.primaryText)
-            background = secondaryButtonDrawable(palette)
-            backgroundTintList = null
-            setOnClickListener {
-                onStop()
-                setStatus("Stop requested")
-            }
-        }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(10) })
-        actionRow.addView(Button(context).apply {
-            text = "Send"
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = accentDrawable(palette, dp(18))
-            backgroundTintList = null
-            setOnClickListener {
-                val text = input.text.toString().trim()
-                if (text.isNotEmpty()) {
-                    onSubmit(text)
-                    input.setText("")
-                    setStatus("Sent to Open Claw bridge")
-                    dismissPanel()
-                }
-            }
-        }, LinearLayout.LayoutParams(0, dp(44), 1f))
-
-        val title = TextView(context).apply {
-            text = "Open Claw Agent"
-            textSize = 17f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(palette.primaryText)
-            gravity = Gravity.CENTER_VERTICAL
+            setColorFilter(palette.primaryText)
+            contentDescription = "Start realtime voice mode"
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            setOnClickListener { onStartVoice() }
         }
         val settingsButton = ImageButton(context).apply {
             setImageResource(R.drawable.ic_settings_gear)
-            background = controlDrawable(palette, dp(14))
+            background = controlDrawable(palette, dp(18))
             backgroundTintList = null
             contentDescription = "Open Claw Agent settings"
             setColorFilter(palette.primaryText)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(9), dp(9), dp(9), dp(9))
             setOnClickListener {
                 dismissPanel()
                 openSettings()
             }
         }
-        val micButton = Button(context).apply {
-            text = "🗣️"
-            textSize = 18f
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = accentDrawable(palette, dp(14))
-            backgroundTintList = null
-            contentDescription = "Start realtime voice mode"
-            setOnClickListener {
-                onStartVoice()
-                dismissPanel()
-            }
-        }
-        val header = LinearLayout(context).apply {
+        val topActions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(10))
-            addView(title, LinearLayout.LayoutParams(0, dp(40), 1f))
-            addView(micButton, LinearLayout.LayoutParams(dp(56), dp(36)).apply { rightMargin = dp(8) })
-            addView(settingsButton, LinearLayout.LayoutParams(dp(36), dp(36)))
+            gravity = Gravity.END
+            addView(voiceButton, LinearLayout.LayoutParams(dp(40), dp(40)).apply { rightMargin = dp(8) })
+            addView(settingsButton, LinearLayout.LayoutParams(dp(40), dp(40)))
+        }
+        controlsSheetView = buildControlsSheet(palette).apply { visibility = View.GONE }
+        statusText = TextView(context).apply {
+            text = lastChatState.status ?: "OpenClaw chat ready."
+            textSize = 12f
+            setTextColor(palette.secondaryText)
+            setPadding(dp(2), dp(8), dp(2), 0)
         }
         val voice = buildVoiceSurface(palette)
+        val composer = buildComposer(palette, input)
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(16))
+            setPadding(dp(14), dp(14), dp(14), dp(12))
             background = recessedPanelDrawable(palette)
             elevation = dp(18).toFloat()
-            addView(header)
-            addView(voice)
-            addView(composerRow, LinearLayout.LayoutParams(
+            addView(topActions, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                dp(42)
             ))
-            addView(actionRow, LinearLayout.LayoutParams(
+            addView(voice)
+            addView(historyScroll, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ).apply { topMargin = dp(4) })
+            addView(controlsSheetView, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(12) })
+            ).apply { topMargin = dp(8) })
+            addView(composer, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) })
             addView(statusText)
         }
 
-        val params = overlayParams(width = dp(320), height = WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
+        val display = context.resources.displayMetrics
+        val params = overlayParams(
+            width = (display.widthPixels - dp(24)).coerceAtLeast(dp(320)),
+            height = (display.heightPixels * CHAT_MODAL_HEIGHT_FRACTION).toInt(),
+            focusable = true
+        ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dp(16)
-            y = dp(224)
+            x = dp(12)
+            y = dp(48)
         }
         input.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
@@ -482,7 +434,7 @@ class OverlayController(
             }
         }
         val scrim = View(context).apply {
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackgroundColor(0x33000000)
             setOnClickListener { dismissPanel() }
         }
         val scrimParams = overlayParams(
@@ -495,12 +447,409 @@ class OverlayController(
         windowManager.addView(scrim, scrimParams)
         panelScrimView = scrim
 
-        attachDrag(header, params, windowView = panel, keepAboveKeyboard = true) {}
         windowManager.addView(panel, params)
         panel.post { keepInsideScreen(panel, params) }
         panelView = panel
+        renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
         renderTranscriptionState(lastTranscriptionState)
+    }
+
+    private fun buildComposerInput(palette: OverlayPalette): EditText {
+        return EditText(context).apply {
+            hint = "Message OpenClaw"
+            minLines = 1
+            maxLines = 4
+            textSize = 14f
+            setTextColor(palette.primaryText)
+            setHintTextColor(palette.secondaryText)
+            background = null
+            backgroundTintList = null
+            setPadding(dp(12), dp(10), dp(12), dp(6))
+            composerInput = this
+        }
+    }
+
+    private fun buildComposer(palette: OverlayPalette, input: EditText): LinearLayout {
+        val controls = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(8), dp(8))
+        }
+        controls.addView(Button(context).apply {
+            text = "+"
+            textSize = 18f
+            isAllCaps = false
+            setTextColor(palette.primaryText)
+            background = controlDrawable(palette, dp(16))
+            backgroundTintList = null
+            contentDescription = "Open chat controls"
+            setOnClickListener { toggleControlsSheet() }
+        }, LinearLayout.LayoutParams(dp(42), dp(38)).apply { rightMargin = dp(6) })
+        modelButton = pillButton(palette, "Model").apply {
+            setOnClickListener { showModelChoices() }
+        }
+        controls.addView(modelButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply { rightMargin = dp(6) })
+        reasoningButton = pillButton(palette, "Reason").apply {
+            setOnClickListener { cycleReasoningChoice() }
+        }
+        controls.addView(reasoningButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply { rightMargin = dp(6) })
+        contextUsageButton = pillButton(palette, "--%").apply {
+            setOnClickListener { showUsageControls() }
+        }
+        controls.addView(contextUsageButton, LinearLayout.LayoutParams(dp(54), dp(38)).apply { rightMargin = dp(6) })
+        controls.addView(Space(context), LinearLayout.LayoutParams(0, 1, 0.35f))
+        transcriptionMicButton = ImageButton(context).apply {
+            setImageResource(R.drawable.ic_mic)
+            background = controlDrawable(palette, dp(16))
+            backgroundTintList = null
+            contentDescription = "Start voice transcription"
+            setColorFilter(palette.primaryText)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            setOnClickListener {
+                if (lastTranscriptionState.isRecording) {
+                    onStopTranscription()
+                } else {
+                    onStartTranscription()
+                }
+            }
+        }
+        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(dp(42), dp(38)).apply { rightMargin = dp(6) })
+        transcriptionCancelButton = Button(context).apply {
+            text = "Cancel"
+            textSize = 11f
+            isAllCaps = false
+            visibility = View.GONE
+            setTextColor(palette.primaryText)
+            background = controlDrawable(palette, dp(16))
+            backgroundTintList = null
+            setOnClickListener { onCancelTranscription() }
+        }
+        controls.addView(transcriptionCancelButton, LinearLayout.LayoutParams(dp(68), dp(38)).apply { rightMargin = dp(6) })
+        sendStopButton = Button(context).apply {
+            text = "Send"
+            textSize = 13f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = accentDrawable(palette, dp(16))
+            backgroundTintList = null
+            setOnClickListener {
+                if (lastChatState.isRunning) {
+                    onStop()
+                    setStatus("Stop requested")
+                } else {
+                    val text = input.text.toString().trim()
+                    if (text.isNotEmpty()) {
+                        onSubmit(text)
+                        input.setText("")
+                        setStatus("Sent to OpenClaw")
+                    }
+                }
+            }
+        }
+        controls.addView(sendStopButton, LinearLayout.LayoutParams(dp(64), dp(38)))
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = recessedInsetDrawable(palette, dp(24))
+            addView(input, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            addView(controls, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+    }
+
+    private fun pillButton(palette: OverlayPalette, label: String): Button {
+        return Button(context).apply {
+            text = label
+            textSize = 12f
+            isAllCaps = false
+            setSingleLine(true)
+            setTextColor(palette.primaryText)
+            background = controlDrawable(palette, dp(16))
+            backgroundTintList = null
+        }
+    }
+
+    private fun buildControlsSheet(palette: OverlayPalette): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = recessedInsetDrawable(palette, dp(22))
+            addView(controlGroupTitle("Controls", palette))
+            addView(controlButtonRow(palette, listOf(
+                "Fast on" to { onChatControlCommand("fast", JSONObject().put("enabled", true)) },
+                "Fast off" to { onChatControlCommand("fast", JSONObject().put("enabled", false)) },
+                "New" to { onNewChatSession() }
+            )))
+            addView(controlButtonRow(palette, listOf(
+                "Tools" to { showToolsControls() },
+                "Commands" to { showCommandControls() },
+                "Sessions" to { showSessionControls() }
+            )).apply { topMargin(dp(6)) })
+            addView(controlButtonRow(palette, listOf(
+                "Queue steer" to { insertComposerText("/queue steer ") },
+                "Verbose" to { onChatControlCommand("verbose", JSONObject().put("level", "high")) },
+                "Usage" to { showUsageControls() }
+            )).apply { topMargin(dp(6)) })
+        }
+    }
+
+    private fun View.topMargin(margin: Int): View {
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = margin }
+        return this
+    }
+
+    private fun controlGroupTitle(text: String, palette: OverlayPalette): TextView {
+        return TextView(context).apply {
+            this.text = text
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(palette.secondaryText)
+            setPadding(dp(2), 0, dp(2), dp(6))
+        }
+    }
+
+    private fun controlButtonRow(palette: OverlayPalette, actions: List<Pair<String, () -> Unit>>): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            actions.forEachIndexed { index, action ->
+                addView(Button(context).apply {
+                    text = action.first
+                    textSize = 11f
+                    isAllCaps = false
+                    setTextColor(palette.primaryText)
+                    background = controlDrawable(palette, dp(14))
+                    backgroundTintList = null
+                    setOnClickListener { action.second() }
+                }, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                    if (index < actions.lastIndex) rightMargin = dp(6)
+                })
+            }
+        }
+    }
+
+    private fun toggleControlsSheet() {
+        controlsSheetView?.let {
+            it.visibility = if (it.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+    }
+
+    private fun showModelChoices() {
+        val models = lastChatState.models.take(6)
+        if (models.isEmpty()) {
+            setStatus("No Gateway models loaded yet.")
+            return
+        }
+        replaceControls("Models", models.map { model ->
+            model.label to {
+                onSetChatModel(model.id)
+                setStatus("Model: ${model.label}")
+            }
+        })
+    }
+
+    private fun cycleReasoningChoice() {
+        val options = lastChatState.reasoningOptions.ifEmpty { ChatState.defaultReasoningOptions }
+        val current = lastChatState.reasoningEffort
+        val nextIndex = ((options.indexOfFirst { it.id == current }.takeIf { it >= 0 } ?: -1) + 1) % options.size
+        val next = options[nextIndex]
+        onSetChatReasoning(next.id)
+        setStatus("Reasoning: ${next.label}")
+    }
+
+    private fun showUsageControls() {
+        val usage = lastChatState.usage
+        val percent = usage.contextRatio?.let { "${(it * 100).roundToInt()}%" } ?: "unknown"
+        replaceControls("Usage", listOf(
+            "Context $percent" to {},
+            "Tokens ${usage.totalTokens ?: "--"}" to {},
+            "Refresh" to { onChatControlCommand("status", JSONObject()) }
+        ))
+    }
+
+    private fun showToolsControls() {
+        val tools = lastChatState.tools.take(9)
+        if (tools.isEmpty()) {
+            setStatus("No Gateway tools loaded yet.")
+            return
+        }
+        replaceControls("Tools", tools.map { tool ->
+            (tool.label ?: tool.id) to { setStatus(tool.description ?: tool.id) }
+        })
+    }
+
+    private fun showCommandControls() {
+        val commands = lastChatState.commands.take(9)
+        if (commands.isEmpty()) {
+            setStatus("No slash commands loaded yet.")
+            return
+        }
+        replaceControls("Commands", commands.map { command ->
+            val text = command.aliases.firstOrNull() ?: "/${command.name}"
+            text to { insertComposerText("$text ") }
+        })
+    }
+
+    private fun showSessionControls() {
+        val sessions = lastChatState.sessions.take(9)
+        if (sessions.isEmpty()) {
+            setStatus("No Gateway sessions loaded yet.")
+            return
+        }
+        replaceControls("Sessions", sessions.map { session ->
+            val label = session.displayName ?: session.label ?: session.sessionId ?: session.key.substringAfterLast(":")
+            label.take(18) to { onSelectChatSession(session.key) }
+        })
+    }
+
+    private fun replaceControls(title: String, actions: List<Pair<String, () -> Unit>>) {
+        val palette = overlayPalette()
+        controlsSheetView?.apply {
+            removeAllViews()
+            visibility = View.VISIBLE
+            addView(controlGroupTitle(title, palette))
+            actions.chunked(3).forEachIndexed { index, row ->
+                addView(controlButtonRow(palette, row).apply {
+                    if (index > 0) topMargin(dp(6))
+                })
+            }
+        }
+    }
+
+    private fun insertComposerText(text: String) {
+        val input = composerInput ?: return
+        val existing = input.text.toString()
+        val separator = if (existing.isBlank() || existing.endsWith(" ")) "" else " "
+        val next = existing + separator + text
+        input.setText(next)
+        input.setSelection(next.length)
+    }
+
+    private fun renderChatState(state: ChatState) {
+        sendStopButton?.text = if (state.isRunning) "Stop" else "Send"
+        modelButton?.text = state.selectedModel?.substringAfter("/") ?: "Model"
+        reasoningButton?.text = state.reasoningEffort ?: "Reason"
+        contextUsageButton?.text = state.usage.contextRatio?.let { "${(it * 100).roundToInt()}%" } ?: "--%"
+        renderTimeline(state)
+    }
+
+    private fun renderTimeline(state: ChatState) {
+        val container = historyContainer ?: return
+        val palette = overlayPalette()
+        container.removeAllViews()
+        if (state.timeline.isEmpty()) {
+            container.addView(emptyHistoryView(palette))
+        } else {
+            state.timeline.forEach { item ->
+                container.addView(when (item.kind) {
+                    ChatTimelineKind.MESSAGE -> messageBubble(item, palette)
+                    ChatTimelineKind.TOOL -> toolRow(item, palette)
+                }, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(8) })
+            }
+        }
+        historyScrollView?.post { historyScrollView?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun emptyHistoryView(palette: OverlayPalette): TextView {
+        return TextView(context).apply {
+            text = "Start a conversation with OpenClaw. Session history will appear here."
+            textSize = 14f
+            setTextColor(palette.secondaryText)
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(72), dp(24), dp(72))
+        }
+    }
+
+    private fun messageBubble(item: ChatTimelineItem, palette: OverlayPalette): LinearLayout {
+        val isUser = item.role == "user"
+        val bubbleColor = when {
+            isUser -> blend(palette.accent, palette.controlSurface, 0.18f)
+            item.role == "system" -> blend(0xFFE53935.toInt(), palette.controlSurface, 0.25f)
+            else -> palette.controlSurface
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = if (isUser) Gravity.END else Gravity.START
+            addView(TextView(context).apply {
+                text = when (item.role) {
+                    "user" -> "You"
+                    "system" -> "Status"
+                    else -> "OpenClaw"
+                }
+                textSize = 11f
+                setTextColor(palette.secondaryText)
+                setPadding(dp(4), 0, dp(4), dp(3))
+            })
+            addView(TextView(context).apply {
+                text = item.text.ifBlank { if (item.isStreaming) "..." else "" }
+                textSize = 14f
+                setTextColor(palette.primaryText)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = roundedDrawable(bubbleColor, dp(18), palette.border)
+            }, LinearLayout.LayoutParams(
+                (context.resources.displayMetrics.widthPixels * 0.78f).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+    }
+
+    private fun toolRow(item: ChatTimelineItem, palette: OverlayPalette): LinearLayout {
+        val tool = item.toolEvent
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = controlDrawable(palette, dp(16))
+            backgroundTintList = null
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener { tool?.eventId?.let(onToggleChatTool) }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(context).apply {
+                    text = if (tool?.isExpanded == true) "v" else ">"
+                    textSize = 14f
+                    setTextColor(palette.secondaryText)
+                    gravity = Gravity.CENTER
+                }, LinearLayout.LayoutParams(dp(20), dp(28)))
+                addView(TextView(context).apply {
+                    text = tool?.title ?: "Tool activity"
+                    textSize = 13f
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setTextColor(palette.primaryText)
+                    setSingleLine(true)
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(context).apply {
+                    text = tool?.status ?: "info"
+                    textSize = 11f
+                    setTextColor(palette.secondaryText)
+                    gravity = Gravity.END
+                })
+            })
+            if (tool?.isExpanded == true) {
+                val details = listOfNotNull(
+                    tool.summary?.let { "Summary: $it" },
+                    tool.args?.let { "Args: $it" },
+                    tool.output?.let { "Output: ${it.take(1200)}" },
+                    tool.error?.let { "Error: $it" }
+                ).joinToString("\n\n")
+                addView(TextView(context).apply {
+                    text = details.ifBlank { "No additional details." }
+                    textSize = 12f
+                    setTextColor(palette.secondaryText)
+                    setPadding(dp(20), dp(8), dp(4), dp(2))
+                })
+            }
+        }
     }
 
     private fun dismissPanel(cancelTranscription: Boolean = true) {
@@ -521,6 +870,13 @@ class OverlayController(
         voiceResultText = null
         voiceMuteButton = null
         voiceHangupButton = null
+        historyContainer = null
+        historyScrollView = null
+        controlsSheetView = null
+        sendStopButton = null
+        modelButton = null
+        reasoningButton = null
+        contextUsageButton = null
     }
 
     private fun buildVoiceSurface(palette: OverlayPalette): LinearLayout {
@@ -951,6 +1307,7 @@ class OverlayController(
         private const val TRASH_TARGET_HIDDEN_SCALE = 0.82f
         private const val VOICE_PULSE_MS = 720L
         private const val VOICE_MODAL_MAX_SCREEN_FRACTION = 0.40f
+        private const val CHAT_MODAL_HEIGHT_FRACTION = 0.82f
         private const val VOICE_GLOW_RED = 0xFFE53935.toInt()
         private const val VOICE_GLOW_RED_CENTER = 0xF2FF453A.toInt()
         private const val VOICE_GLOW_RED_MID = 0xB3FF453A.toInt()

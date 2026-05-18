@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class AgentForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -59,7 +60,16 @@ class AgentForegroundService : Service() {
             onStopVoice = { voiceRuntimeController?.stopFromUi() },
             onStartTranscription = { startComposerTranscription() },
             onStopTranscription = { stopComposerTranscription() },
-            onCancelTranscription = { cancelComposerTranscription() }
+            onCancelTranscription = { cancelComposerTranscription() },
+            onSelectChatSession = { sessionKey -> webSocketClient?.sendChatSelectSession(sessionKey) },
+            onNewChatSession = { webSocketClient?.sendChatNewSession() },
+            onSetChatModel = { model -> webSocketClient?.sendChatSetModel(chatState.sessionKey, model) },
+            onSetChatReasoning = { reasoning -> webSocketClient?.sendChatSetReasoning(chatState.sessionKey, reasoning) },
+            onChatControlCommand = { command, args -> webSocketClient?.sendChatControlCommand(command, args) },
+            onToggleChatTool = { eventId ->
+                chatState = ChatStateReducer.toggleTool(chatState, eventId)
+                overlayController?.setChatState(chatState)
+            }
         ).also { it.show() }
         voiceRuntimeController = VoiceRuntimeController(
             context = this,
@@ -135,7 +145,7 @@ class AgentForegroundService : Service() {
         updateNotification()
     }
 
-    private fun handleChatMessage(message: org.json.JSONObject) {
+    private fun handleChatMessage(message: JSONObject) {
         serviceScope.launch {
             chatState = ChatStateReducer.reduce(chatState, message)
             overlayController?.setChatState(chatState)
