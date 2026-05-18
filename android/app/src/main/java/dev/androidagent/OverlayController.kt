@@ -546,7 +546,10 @@ class OverlayController(
             drawableRes = R.drawable.ic_voice_wave,
             contentDescription = "Start realtime voice mode",
             compact = true
-        ) { onStartVoice() }
+        ) {
+            onStartVoice()
+            dismissPanel()
+        }
         val settingsButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_settings_gear,
@@ -997,7 +1000,10 @@ class OverlayController(
             AnchoredPicker.Row(
                 label = "Voice mode",
                 iconRes = R.drawable.ic_voice,
-                onSelect = { onStartVoice() }
+                onSelect = {
+                    onStartVoice()
+                    dismissPanel()
+                }
             ),
             AnchoredPicker.Row(
                 label = "Queue steer",
