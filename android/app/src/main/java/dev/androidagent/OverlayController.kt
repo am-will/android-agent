@@ -487,7 +487,19 @@ class OverlayController(
         }
         panelContent = chrome
 
-        val host = FrameLayout(context).apply {
+        val host = object : FrameLayout(context) {
+            override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                    if (anchoredPicker?.isShowing == true) {
+                        anchoredPicker?.dismiss()
+                    } else {
+                        dismissPanel()
+                    }
+                    return true
+                }
+                return super.dispatchKeyEventPreIme(event)
+            }
+        }.apply {
             isFocusableInTouchMode = true
             addView(chrome, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
