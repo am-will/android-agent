@@ -1653,11 +1653,11 @@ class OverlayController(
         bubble.elevation = if (state.status == VoiceRuntimeStatus.IDLE) dp(DesignTokens.Elevation.mid).toFloat() else dp(DesignTokens.Elevation.popover + 6).toFloat()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val shadowColor = when (state.status) {
-                VoiceRuntimeStatus.ERROR -> tokens.danger
+                VoiceRuntimeStatus.LISTENING -> tokens.success
                 VoiceRuntimeStatus.CONNECTING,
-                VoiceRuntimeStatus.LISTENING,
                 VoiceRuntimeStatus.THINKING,
-                VoiceRuntimeStatus.SPEAKING -> tokens.accent
+                VoiceRuntimeStatus.SPEAKING,
+                VoiceRuntimeStatus.ERROR -> tokens.danger
                 VoiceRuntimeStatus.IDLE -> Color.TRANSPARENT
             }
             bubble.outlineAmbientShadowColor = shadowColor
@@ -1668,18 +1668,18 @@ class OverlayController(
 
     private fun bubbleBackgroundForVoiceState(state: VoiceRuntimeState, tokens: ThemeTokens): GradientDrawable {
         return when (state.status) {
+            VoiceRuntimeStatus.LISTENING -> Drawables.bubbleHalo(
+                context,
+                centerColor = DesignTokens.withAlpha(tokens.success, 0xE6),
+                midColor = DesignTokens.withAlpha(tokens.success, 0x88)
+            )
+            VoiceRuntimeStatus.CONNECTING,
+            VoiceRuntimeStatus.THINKING,
+            VoiceRuntimeStatus.SPEAKING,
             VoiceRuntimeStatus.ERROR -> Drawables.bubbleHalo(
                 context,
                 centerColor = DesignTokens.withAlpha(tokens.danger, 0xE6),
-                midColor = DesignTokens.withAlpha(tokens.danger, 0x99)
-            )
-            VoiceRuntimeStatus.CONNECTING,
-            VoiceRuntimeStatus.LISTENING,
-            VoiceRuntimeStatus.THINKING,
-            VoiceRuntimeStatus.SPEAKING -> Drawables.bubbleHalo(
-                context,
-                centerColor = DesignTokens.withAlpha(tokens.accent, 0xE6),
-                midColor = DesignTokens.withAlpha(tokens.accent, 0x88)
+                midColor = DesignTokens.withAlpha(tokens.danger, 0x88)
             )
             VoiceRuntimeStatus.IDLE -> Drawables.bubbleHalo(
                 context,
