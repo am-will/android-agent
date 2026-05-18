@@ -29,6 +29,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
@@ -1552,7 +1553,13 @@ class OverlayController(
         val visible = Rect()
         panel.getWindowVisibleDisplayFrame(visible)
         val displayHeight = context.resources.displayMetrics.heightPixels
-        val keyboardHeight = displayHeight - visible.bottom
+        val imeHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            panel.rootWindowInsets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
+        } else {
+            0
+        }
+        val visibleKeyboardHeight = (displayHeight - visible.bottom).coerceAtLeast(0)
+        val keyboardHeight = imeHeight.coerceAtLeast(visibleKeyboardHeight)
         val defaultY = displayHeight - params.height
         if (keyboardHeight < dp(120)) {
             panel.animate().cancel()
@@ -1564,7 +1571,8 @@ class OverlayController(
             return
         }
 
-        val desiredY = visible.bottom - params.height
+        val keyboardTop = displayHeight - keyboardHeight
+        val desiredY = keyboardTop - params.height
         panel.translationY = 0f
         if (params.y != desiredY) {
             params.y = desiredY

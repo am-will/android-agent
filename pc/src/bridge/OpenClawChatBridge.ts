@@ -77,14 +77,6 @@ export class OpenClawChatBridge {
     if (message.sessionKey) {
       state.sessionKey = message.sessionKey;
     }
-    if (message.model) {
-      state.model = message.model;
-      await this.patchSession(message.deviceId, state.sessionKey, { model: message.model });
-    }
-    if (message.reasoningEffort) {
-      state.reasoningEffort = message.reasoningEffort;
-      await this.patchSession(message.deviceId, state.sessionKey, { thinkingLevel: message.reasoningEffort });
-    }
 
     const idempotencyKey = message.idempotencyKey ?? randomUUID();
     if (isExplicitPhoneTask(text)) {

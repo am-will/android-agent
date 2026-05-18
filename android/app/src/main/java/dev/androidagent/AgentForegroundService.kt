@@ -136,9 +136,7 @@ class AgentForegroundService : Service() {
         overlayController?.setChatState(chatState)
         val sent = webSocketClient?.sendChatMessage(
             text = text,
-            sessionKey = chatState.sessionKey,
-            model = chatState.selectedModel,
-            reasoningEffort = chatState.reasoningEffort
+            sessionKey = chatState.sessionKey
         ) == true
         if (sent) {
             lastNotificationText = "Sent to OpenClaw"
