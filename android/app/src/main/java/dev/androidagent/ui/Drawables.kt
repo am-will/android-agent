@@ -8,6 +8,7 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.content.res.ColorStateList
+import androidx.core.content.ContextCompat
 import dev.androidagent.ui.DesignTokens.dp
 import dev.androidagent.ui.DesignTokens.withAlpha
 
@@ -235,6 +236,32 @@ object Drawables {
         rippleColor: Int = if (tokens.isDark) withAlpha(Color.WHITE, 0x33) else withAlpha(Color.BLACK, 0x22)
     ): Drawable {
         return RippleDrawable(ColorStateList.valueOf(rippleColor), base, null)
+    }
+
+    /**
+     * Builds a horizontal two-icon drawable suitable for use as a compound
+     * drawable on a TextView. Each icon is rendered at [iconDp] x [iconDp] dp
+     * separated by [gapDp] dp.
+     */
+    fun horizontalIconPair(
+        context: Context,
+        leftRes: Int,
+        rightRes: Int,
+        tint: Int,
+        iconDp: Int = 14,
+        gapDp: Int = 2
+    ): Drawable {
+        val left = ContextCompat.getDrawable(context, leftRes)!!.mutate()
+        val right = ContextCompat.getDrawable(context, rightRes)!!.mutate()
+        left.setTint(tint)
+        right.setTint(tint)
+        val iconPx = dp(context, iconDp)
+        val gapPx = dp(context, gapDp)
+        left.setBounds(0, 0, iconPx, iconPx)
+        right.setBounds(iconPx + gapPx, 0, iconPx * 2 + gapPx, iconPx)
+        val layer = LayerDrawable(arrayOf(left, right))
+        layer.setBounds(0, 0, iconPx * 2 + gapPx, iconPx)
+        return layer
     }
 
     /** Voice transcript-area inset matches glassInset but with a softer accent border. */

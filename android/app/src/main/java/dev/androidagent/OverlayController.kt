@@ -1032,18 +1032,18 @@ class OverlayController(
             }
         }
 
+        val fastModeOn = lastChatState.fastMode == true
         val modeRows = listOf(
             AnchoredPicker.Row(
-                label = "Fast mode on",
+                label = "Fast mode: ${if (fastModeOn) "On" else "Off"}",
+                sublabel = if (fastModeOn) "Tap to turn off" else "Tap to turn on",
                 iconRes = R.drawable.ic_bolt,
-                selected = lastChatState.fastMode == true,
-                onSelect = { onChatControlCommand("fast", JSONObject().put("enabled", true)); setStatus("Fast mode enabled") }
-            ),
-            AnchoredPicker.Row(
-                label = "Fast mode off",
-                iconRes = R.drawable.ic_bolt,
-                selected = lastChatState.fastMode == false,
-                onSelect = { onChatControlCommand("fast", JSONObject().put("enabled", false)); setStatus("Fast mode disabled") }
+                selected = fastModeOn,
+                onSelect = {
+                    val nextEnabled = !fastModeOn
+                    onChatControlCommand("fast", JSONObject().put("enabled", nextEnabled))
+                    setStatus(if (nextEnabled) "Fast mode enabled" else "Fast mode disabled")
+                }
             ),
             AnchoredPicker.Row(
                 label = "Verbose: high",
@@ -1170,7 +1170,29 @@ class OverlayController(
             setImageResource(if (state.isRunning) R.drawable.ic_stop else R.drawable.ic_send)
             contentDescription = if (state.isRunning) "Stop OpenClaw turn" else "Send message"
         }
-        modelButton?.text = formatModelLabel(state.selectedModel ?: state.models.firstOrNull()?.id)
+        modelButton?.let { btn ->
+            btn.text = formatModelLabel(state.selectedModel ?: state.models.firstOrNull()?.id)
+            val chevron = androidx.core.content.ContextCompat
+                .getDrawable(context, R.drawable.ic_chevron_down)?.mutate()?.apply {
+                    setTint(tokens.secondaryText)
+                    setBounds(0, 0, dp(12), dp(12))
+                }
+            val left = if (state.fastMode == true) {
+                Drawables.horizontalIconPair(
+                    context = context,
+                    leftRes = R.drawable.ic_model,
+                    rightRes = R.drawable.ic_bolt,
+                    tint = tokens.accent
+                )
+            } else {
+                androidx.core.content.ContextCompat
+                    .getDrawable(context, R.drawable.ic_model)?.mutate()?.apply {
+                        setTint(tokens.secondaryText)
+                        setBounds(0, 0, dp(14), dp(14))
+                    }
+            }
+            btn.setCompoundDrawables(left, null, chevron, null)
+        }
         reasoningButton?.text = formatReasoningLabel(state.reasoningEffort)
         contextUsageView?.bind(tokens, state.usage.contextRatio)
         modelTitleSubtext?.text = state.selectedModel?.let { modelDisplayLabel(it) }
