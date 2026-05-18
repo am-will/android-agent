@@ -459,7 +459,7 @@ class OverlayController(
         panelScrimView = scrim
 
         windowManager.addView(panel, params)
-        panel.viewTreeObserver.addOnGlobalLayoutListener { positionComposerAboveKeyboard(panel) }
+        panel.viewTreeObserver.addOnGlobalLayoutListener { positionPanelAboveKeyboard(panel, params) }
         panel.requestFocus()
         panelView = panel
         renderChatState(lastChatState)
@@ -1545,26 +1545,31 @@ class OverlayController(
     }
 
     private fun keepAboveKeyboard(view: View, params: WindowManager.LayoutParams) {
-        positionComposerAboveKeyboard(view)
+        positionPanelAboveKeyboard(view, params)
     }
 
-    private fun positionComposerAboveKeyboard(panel: View) {
+    private fun positionPanelAboveKeyboard(panel: View, params: WindowManager.LayoutParams) {
         val visible = Rect()
         panel.getWindowVisibleDisplayFrame(visible)
         val displayHeight = context.resources.displayMetrics.heightPixels
         val keyboardHeight = displayHeight - visible.bottom
+        val defaultY = displayHeight - params.height
         if (keyboardHeight < dp(120)) {
             panel.animate().cancel()
             panel.translationY = 0f
+            if (params.y != defaultY) {
+                params.y = defaultY
+                windowManager.updateViewLayout(panel, params)
+            }
             return
         }
 
+        val desiredY = visible.bottom - params.height
         panel.translationY = 0f
-        val location = IntArray(2)
-        panel.getLocationOnScreen(location)
-        val panelBottom = location[1] + panel.height
-        val overlap = panelBottom - visible.bottom
-        panel.translationY = if (overlap > 0) -overlap.toFloat() else 0f
+        if (params.y != desiredY) {
+            params.y = desiredY
+            windowManager.updateViewLayout(panel, params)
+        }
     }
 
     private fun overlayPalette(): OverlayPalette {
