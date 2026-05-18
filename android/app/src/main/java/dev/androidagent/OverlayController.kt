@@ -101,6 +101,7 @@ class OverlayController(
     private var voiceMuteButton: Button? = null
     private var voiceHangupButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
+    private var voiceSurfaceForceHidden = false
     private var lastChatState = ChatState()
     private var historyContainer: LinearLayout? = null
     private var historyScrollView: ScrollView? = null
@@ -1384,7 +1385,12 @@ class OverlayController(
             setTextColor(tokens.accentInk)
             background = Drawables.dangerSurface(context, tokens, DesignTokens.Radius.pill)
             backgroundTintList = null
-            setOnClickListener { onStopVoice() }
+            setOnClickListener {
+                onStopVoice()
+                voiceSurfaceForceHidden = true
+                voiceSurface?.visibility = View.GONE
+                dismissPanel()
+            }
         }
         val voiceActions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1415,7 +1421,11 @@ class OverlayController(
 
     private fun renderVoiceState(state: VoiceRuntimeState) {
         applyBubbleVoiceIndicator(state)
-        val shouldShow = state.isActive || state.status == VoiceRuntimeStatus.ERROR || state.transcript.isNotBlank()
+        if (state.isActive) {
+            voiceSurfaceForceHidden = false
+        }
+        val shouldShow = !voiceSurfaceForceHidden &&
+            (state.isActive || state.status == VoiceRuntimeStatus.ERROR || state.transcript.isNotBlank())
         voiceSurface?.visibility = if (shouldShow) View.VISIBLE else View.GONE
         voiceStatusText?.text = buildString {
             append("Voice: ")
