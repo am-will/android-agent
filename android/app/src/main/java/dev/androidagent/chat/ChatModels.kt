@@ -145,6 +145,7 @@ object ChatStateReducer {
         return when (message.optString("type")) {
             "chat.state" -> reduceState(state, message)
             "chat.history" -> reduceHistory(state, message)
+            "chat.message" -> reduceMessage(state, message)
             "chat.reasoning_delta" -> reduceReasoningDelta(state, message)
             "chat.reasoning_clear" -> reduceReasoningClear(state, message)
             "chat.delta" -> reduceDelta(state, message)
@@ -189,6 +190,16 @@ object ChatStateReducer {
             sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
             sessionId = message.optNullableString("sessionId") ?: state.sessionId,
             timeline = parseHistory(message.optJSONArray("messages")),
+            error = null
+        )
+    }
+
+    private fun reduceMessage(state: ChatState, message: JSONObject): ChatState {
+        val item = parseHistoryMessage(message.optJSONObject("message"), "message") ?: return state
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            sessionId = message.optNullableString("sessionId") ?: state.sessionId,
+            timeline = upsertTimeline(state.timeline, item),
             error = null
         )
     }
@@ -378,18 +389,22 @@ object ChatStateReducer {
         if (array == null) return emptyList()
         return buildList {
             for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val text = item.optString("text")
-                if (text.isBlank()) continue
-                add(ChatTimelineItem(
-                    id = item.optNullableString("id") ?: "history_$index",
-                    kind = ChatTimelineKind.MESSAGE,
-                    role = item.optString("role", "assistant"),
-                    text = text,
-                    timestamp = item.optNullableLong("timestamp")
-                ))
+                parseHistoryMessage(array.optJSONObject(index), "history_$index")?.let { add(it) }
             }
         }
+    }
+
+    private fun parseHistoryMessage(item: JSONObject?, fallbackId: String): ChatTimelineItem? {
+        if (item == null) return null
+        val text = item.optString("text")
+        if (text.isBlank()) return null
+        return ChatTimelineItem(
+            id = item.optNullableString("id") ?: fallbackId,
+            kind = ChatTimelineKind.MESSAGE,
+            role = item.optString("role", "assistant"),
+            text = text,
+            timestamp = item.optNullableLong("timestamp")
+        )
     }
 
     private fun parseSessions(array: JSONArray?): List<ChatSessionRow> {

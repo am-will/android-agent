@@ -365,6 +365,14 @@ export interface ChatHistoryOutboundMessage {
   messages: ChatHistoryMessage[];
 }
 
+export interface ChatMessageOutboundMessage {
+  type: "chat.message";
+  deviceId: string;
+  sessionKey: string;
+  sessionId?: string | null;
+  message: ChatHistoryMessage;
+}
+
 export interface ChatDeltaMessage {
   type: "chat.delta";
   deviceId: string;
@@ -460,6 +468,7 @@ export interface ChatUsageMessage {
 export type ChatOutboundMessage =
   | ChatStateMessage
   | ChatHistoryOutboundMessage
+  | ChatMessageOutboundMessage
   | ChatDeltaMessage
   | ChatReasoningDeltaMessage
   | ChatReasoningClearMessage

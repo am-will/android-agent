@@ -217,6 +217,7 @@ class PhoneWebSocketClient(
             "agent_status" -> onStatus(message.optString("text"), message.optString("status", "info"))
             "chat.state",
             "chat.history",
+            "chat.message",
             "chat.delta",
             "chat.reasoning_delta",
             "chat.reasoning_clear",

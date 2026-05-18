@@ -24,6 +24,37 @@ class ChatStateReducerTest {
     }
 
     @Test
+    fun messageAppendsAndUpsertsWithoutReplacingTimeline() {
+        val withHistory = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.history")
+            .put("sessionKey", "agent:main:main")
+            .put("messages", JSONArray()
+                .put(JSONObject().put("id", "a1").put("role", "assistant").put("text", "Hi there"))))
+        val withMessage = ChatStateReducer.reduce(withHistory, JSONObject()
+            .put("type", "chat.message")
+            .put("sessionKey", "agent:main:main")
+            .put("message", JSONObject()
+                .put("id", "u1")
+                .put("role", "user")
+                .put("text", "Open settings")
+                .put("timestamp", 123L)))
+        val upserted = ChatStateReducer.reduce(withMessage, JSONObject()
+            .put("type", "chat.message")
+            .put("sessionKey", "agent:main:main")
+            .put("message", JSONObject()
+                .put("id", "u1")
+                .put("role", "user")
+                .put("text", "Open Bluetooth settings")))
+
+        assertEquals(2, withMessage.timeline.size)
+        assertEquals("assistant", withMessage.timeline[0].role)
+        assertEquals("user", withMessage.timeline[1].role)
+        assertEquals("Open settings", withMessage.timeline[1].text)
+        assertEquals(2, upserted.timeline.size)
+        assertEquals("Open Bluetooth settings", upserted.timeline[1].text)
+    }
+
+    @Test
     fun deltasAppendThenFinalStopsRun() {
         val withDelta = ChatStateReducer.reduce(ChatState(), JSONObject()
             .put("type", "chat.delta")
