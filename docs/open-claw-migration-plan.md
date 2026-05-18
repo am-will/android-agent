@@ -14,8 +14,9 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 ## Implementation Status
 
 - Default dispatcher selection now uses `PHONE_AGENT_DISPATCHER=openclaw` and `OpenClawSessionClient`.
-- The Android chat overlay now uses the OpenClaw Gateway WebSocket path for primary session chat: `chat.history`, `chat.send`, `chat.abort`, `sessions.*`, `models.list`, `commands.list`, and `tools.effective`.
-- `OpenClawSessionClient` still delegates legacy request paths and realtime delegated tasks to `openclaw agent --json` with a stable `OPENCLAW_AGENT_SESSION_ID`.
+- The Android chat overlay now uses the OpenClaw Gateway WebSocket path for primary session chat: `chat.history`, `chat.message`, `chat.send`, `chat.abort`, `sessions.*`, `models.list`, `commands.list`, and `tools.effective`.
+- `OpenClawSessionClient` still delegates legacy `user_request` and fallback paths to `openclaw agent --json` with a stable `OPENCLAW_AGENT_SESSION_ID`.
+- Realtime delegated OpenClaw work now routes through the Gateway chat bridge so start, steer, and stop text appears in the viewfinder as user messages and Gateway output streams back to the same chat.
 - Realtime voice exposes `delegate_openclaw_task` for general remote-PC work and keeps `run_phone_task` for explicit Android phone work.
 - `npm run openclaw:mcp` registers the existing `android-phone` MCP server with OpenClaw, so phone tools are optional capabilities of the OpenClaw session.
 - The Android bubble now opens a large chat modal with scrollable Gateway history, a bottom composer, model/reasoning/session controls, usage summary, and expandable tool rows.
@@ -41,8 +42,8 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 
 ## Remaining Follow-Ups
 
-- Realtime voice still delegates through the dispatcher path; it can be moved to the Gateway chat/session path after voice behavior is revalidated.
-- Mid-task steering currently depends on the path: Gateway chat supports abort and slash/session controls, while the CLI dispatcher path still uses stop plus follow-up as the reliable fallback.
+- Realtime Gateway chat sessions are currently reused for a 15-minute window; future work can expose that window as user configuration if needed.
+- Mid-task steering now enters the Gateway chat as a visible user message; behavior still depends on the installed OpenClaw Gateway's active-run semantics.
 - General OpenClaw tasks currently serialize through the bridge's single active adapter process; future work can use OpenClaw's own concurrency model if needed.
 - How should the bridge select a remote PC/session when multiple Open Claw sessions are available?
 - What auth boundary is required between this bridge and the remote PC session beyond the local prototype token?

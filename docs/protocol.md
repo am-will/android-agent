@@ -182,6 +182,17 @@ The bridge returns session state, history, metadata, stream deltas, final text, 
 }
 ```
 
+The bridge can also append a single visible message without replacing the timeline. Realtime-delegated requests, steers, and stop reasons use this so the viewfinder shows them as normal user bubbles while Gateway output continues streaming into the same chat:
+
+```json
+{
+  "type": "chat.message",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "message": { "id": "user_realtime_call_abc", "role": "user", "text": "Open Facebook messages", "timestamp": 1779070000000 }
+}
+```
+
 ```json
 {
   "type": "chat.delta",
@@ -332,7 +343,7 @@ Use `delegate_openclaw_task` for general work that should happen in OpenClaw on 
 }
 ```
 
-The bridge validates that `name` is `delegate_openclaw_task`, rejects empty or oversized instructions, and routes the task to the active desktop-agent dispatcher as a general OpenClaw task.
+The bridge validates that `name` is `delegate_openclaw_task`, rejects empty or oversized instructions, and routes the task through the Gateway-backed chat session as a general OpenClaw task. The delegated instruction is also emitted as `chat.message` with `role: "user"` so it appears in the Android viewfinder before the Gateway stream starts.
 
 Use `run_phone_task` for new actionable phone tasks:
 
@@ -350,9 +361,11 @@ Use `run_phone_task` for new actionable phone tasks:
 }
 ```
 
-The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and routes the task to OpenClaw with explicit phone-control context. Only one realtime task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active task before starting the new task.
+The bridge validates that `name` is `run_phone_task`, rejects empty or oversized instructions, and routes the task through the same visible Gateway chat session. Only one realtime task runs per device. Later calls queue FIFO up to the bridge limit; calls with `"urgency": "interrupt"` interrupt the active task before starting the new task.
 
-Use `steer_phone_task` when the user corrects or adds information while a phone task is running. The bridge injects the guidance into the active task using the current dispatcher adapter:
+Realtime chat reuses the previous realtime Gateway session for 15 minutes after the last accepted realtime task, steer, or stop. If the window has expired, the bridge starts a fresh chat before sending the realtime request so the viewfinder shows a clean task thread.
+
+Use `steer_phone_task` when the user corrects or adds information while a phone task is running. The bridge sends the guidance into the active Gateway chat as a visible user message:
 
 ```json
 {
@@ -368,7 +381,7 @@ Use `steer_phone_task` when the user corrects or adds information while a phone 
 
 Use `steer_openclaw_task` the same way for a general OpenClaw task.
 
-Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the phone as-is. The bridge cancels queued realtime tasks, rejects pending phone commands, and interrupts the active dispatcher task:
+Use `stop_phone_task` when the user says to stop, pause, cancel, or leave the phone as-is. The bridge cancels queued realtime tasks, aborts the active Gateway chat run, and appends the stop reason as a visible user message:
 
 ```json
 {
