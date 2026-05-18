@@ -87,6 +87,8 @@ object DesignTokens {
 
     object Sizes {
         const val control = 36
+        const val compact = 30         // composer-row controls (must fit on narrow screens)
+        const val compactAction = 36   // composer send button
         const val action = 44
         const val bubble = 56
         const val composerMin = 56

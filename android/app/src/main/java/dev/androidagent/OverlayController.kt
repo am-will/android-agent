@@ -543,12 +543,14 @@ class OverlayController(
         val voiceButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_voice_wave,
-            contentDescription = "Start realtime voice mode"
+            contentDescription = "Start realtime voice mode",
+            compact = true
         ) { onStartVoice() }
         val settingsButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_settings_gear,
-            contentDescription = "Open Claw Agent settings"
+            contentDescription = "Open Claw Agent settings",
+            compact = true
         ) {
             dismissPanel()
             openSettings()
@@ -556,7 +558,8 @@ class OverlayController(
         val closeButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_close,
-            contentDescription = "Close chat"
+            contentDescription = "Close chat",
+            compact = true
         ) { dismissPanel() }
 
         val handle = View(context).apply {
@@ -568,13 +571,16 @@ class OverlayController(
 
         val titleText = TextView(context).apply {
             text = "OpenClaw"
-            Typography.applyHeadline(this, tokens)
+            Typography.applyCallout(this, tokens)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             isSingleLine = true
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         val subtitleText = TextView(context).apply {
             text = lastChatState.selectedModel?.let { modelDisplayLabel(it) } ?: "Ready"
-            Typography.applyCaption(this, tokens, emphasis = true)
+            textSize = 10f
+            setTextColor(tokens.tertiaryText)
+            includeFontPadding = false
             isSingleLine = true
             ellipsize = android.text.TextUtils.TruncateAt.END
             modelTitleSubtext = this
@@ -590,24 +596,26 @@ class OverlayController(
             ).apply { topMargin = dp(1) })
         }
 
+        val headerSize = dp(DesignTokens.Sizes.compact)
+        val headerGap = dp(3)
         val actions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(voiceButton, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.control), dp(DesignTokens.Sizes.control)).apply { rightMargin = dp(DesignTokens.Spacing.xs) })
-            addView(settingsButton, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.control), dp(DesignTokens.Sizes.control)).apply { rightMargin = dp(DesignTokens.Spacing.xs) })
-            addView(closeButton, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.control), dp(DesignTokens.Sizes.control)))
+            addView(voiceButton, LinearLayout.LayoutParams(headerSize, headerSize).apply { rightMargin = headerGap })
+            addView(settingsButton, LinearLayout.LayoutParams(headerSize, headerSize).apply { rightMargin = headerGap })
+            addView(closeButton, LinearLayout.LayoutParams(headerSize, headerSize))
         }
 
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.xs))
-            addView(handle, LinearLayout.LayoutParams(dp(34), dp(4)).apply {
+            setPadding(dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.xs))
+            addView(handle, LinearLayout.LayoutParams(dp(30), dp(4)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
             })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(DesignTokens.Spacing.sm), 0, dp(DesignTokens.Spacing.xs))
+                setPadding(0, dp(DesignTokens.Spacing.xs), 0, dp(DesignTokens.Spacing.xs))
                 addView(titleStack, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                 addView(actions)
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -637,14 +645,14 @@ class OverlayController(
             hint = "Message OpenClaw"
             minLines = 1
             maxLines = 5
-            minHeight = dp(DesignTokens.Sizes.action)
-            textSize = DesignTokens.Text.callout
+            minHeight = dp(DesignTokens.Sizes.compactAction)
+            textSize = DesignTokens.Text.body
             setTextColor(tokens.primaryText)
             setHintTextColor(tokens.tertiaryText)
             background = null
             backgroundTintList = null
             includeFontPadding = false
-            setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md))
+            setPadding(dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.sm))
             setOnClickListener {
                 armKeyboardFallback()
                 panelView?.let { panel ->
@@ -667,6 +675,10 @@ class OverlayController(
             ))
         }
 
+        val controlSize = dp(DesignTokens.Sizes.compact)
+        val sendSize = dp(DesignTokens.Sizes.compactAction)
+        val controlGap = dp(3)
+
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -675,18 +687,19 @@ class OverlayController(
         plusButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_plus,
-            contentDescription = "Open chat controls"
+            contentDescription = "Open chat controls",
+            compact = true
         ) { showPlusMenu() }
-        controls.addView(plusButton, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.control), dp(DesignTokens.Sizes.control)).apply { rightMargin = dp(DesignTokens.Spacing.xs) })
+        controls.addView(plusButton, LinearLayout.LayoutParams(controlSize, controlSize).apply { rightMargin = controlGap })
 
         modelButton = compactPill(tokens, "Model", R.drawable.ic_model).apply {
             setOnClickListener { showModelChoices() }
         }
         controls.addView(modelButton, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
-            dp(DesignTokens.Sizes.control)
+            controlSize
         ).apply {
-            rightMargin = dp(DesignTokens.Spacing.xs)
+            rightMargin = controlGap
         })
 
         reasoningButton = compactPill(tokens, "Reason", R.drawable.ic_reasoning).apply {
@@ -695,23 +708,24 @@ class OverlayController(
         }
         controls.addView(reasoningButton, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
-            dp(DesignTokens.Sizes.control)
+            controlSize
         ).apply {
-            rightMargin = dp(DesignTokens.Spacing.xs)
+            rightMargin = controlGap
         })
 
         contextUsageView = ContextUsageView(context).apply {
             bind(tokens, lastChatState.usage.contextRatio)
             setOnClickListener { showUsageControls() }
         }
-        controls.addView(contextUsageView, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.control), dp(DesignTokens.Sizes.control)).apply { rightMargin = dp(DesignTokens.Spacing.xs) })
+        controls.addView(contextUsageView, LinearLayout.LayoutParams(controlSize, controlSize).apply { rightMargin = controlGap })
 
         controls.addView(Space(context), LinearLayout.LayoutParams(0, 1, 1f))
 
         transcriptionMicButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_mic,
-            contentDescription = "Start voice transcription"
+            contentDescription = "Start voice transcription",
+            compact = true
         ) {
             if (lastTranscriptionState.isRecording) {
                 onStopTranscription()
@@ -719,21 +733,23 @@ class OverlayController(
                 onStartTranscription()
             }
         }
-        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.control), dp(DesignTokens.Sizes.control)).apply { rightMargin = dp(DesignTokens.Spacing.xs) })
+        controls.addView(transcriptionMicButton, LinearLayout.LayoutParams(controlSize, controlSize).apply { rightMargin = controlGap })
 
         transcriptionCancelButton = Button(context).apply {
             text = "Cancel"
-            textSize = DesignTokens.Text.footnote
+            textSize = DesignTokens.Text.caption
             isAllCaps = false
             visibility = View.GONE
             setTextColor(tokens.primaryText)
             background = Drawables.pillSurface(context, tokens)
             backgroundTintList = null
             includeFontPadding = false
-            setPadding(dp(DesignTokens.Spacing.md), 0, dp(DesignTokens.Spacing.md), 0)
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(DesignTokens.Spacing.sm + 2), 0, dp(DesignTokens.Spacing.sm + 2), 0)
             setOnClickListener { onCancelTranscription() }
         }
-        controls.addView(transcriptionCancelButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(DesignTokens.Sizes.control)).apply { rightMargin = dp(DesignTokens.Spacing.xs) })
+        controls.addView(transcriptionCancelButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, controlSize).apply { rightMargin = controlGap })
 
         sendStopButton = iconButton(
             tokens = tokens,
@@ -754,7 +770,7 @@ class OverlayController(
                 }
             }
         }
-        controls.addView(sendStopButton, LinearLayout.LayoutParams(dp(DesignTokens.Sizes.action), dp(DesignTokens.Sizes.action)))
+        controls.addView(sendStopButton, LinearLayout.LayoutParams(sendSize, sendSize))
 
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -775,8 +791,10 @@ class OverlayController(
         drawableRes: Int,
         contentDescription: String,
         accent: Boolean = false,
+        compact: Boolean = false,
         onClick: () -> Unit
     ): ImageButton {
+        val pad = if (compact) 6 else DesignTokens.Spacing.sm
         return ImageButton(context).apply {
             setImageResource(drawableRes)
             background = if (accent) Drawables.accentSurface(context, tokens, DesignTokens.Radius.pill)
@@ -788,7 +806,7 @@ class OverlayController(
             setMinimumWidth(0)
             setMinimumHeight(0)
             adjustViewBounds = true
-            setPadding(dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.sm))
+            setPadding(dp(pad), dp(pad), dp(pad), dp(pad))
             setOnClickListener { onClick() }
         }
     }
@@ -796,20 +814,20 @@ class OverlayController(
     private fun compactPill(tokens: ThemeTokens, label: String, iconRes: Int): TextView {
         return TextView(context).apply {
             text = label
-            textSize = DesignTokens.Text.footnote
+            textSize = DesignTokens.Text.caption
             gravity = Gravity.CENTER_VERTICAL
             setSingleLine(true)
             ellipsize = android.text.TextUtils.TruncateAt.END
-            maxWidth = dp(140)
+            maxWidth = dp(96)
             setTextColor(tokens.primaryText)
             background = Drawables.pillSurface(context, tokens)
             backgroundTintList = null
-            minWidth = dp(72)
-            minHeight = dp(DesignTokens.Sizes.control)
+            minWidth = dp(54)
+            minHeight = dp(DesignTokens.Sizes.compact)
             includeFontPadding = false
-            setPadding(dp(DesignTokens.Spacing.md), 0, dp(DesignTokens.Spacing.md), 0)
+            setPadding(dp(DesignTokens.Spacing.sm + 2), 0, dp(DesignTokens.Spacing.sm + 2), 0)
             setCompoundDrawablesWithIntrinsicBounds(iconRes, 0, R.drawable.ic_chevron_down, 0)
-            compoundDrawablePadding = dp(DesignTokens.Spacing.xs)
+            compoundDrawablePadding = dp(3)
             compoundDrawableTintList = android.content.res.ColorStateList.valueOf(tokens.secondaryText)
         }
     }
