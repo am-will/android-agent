@@ -588,8 +588,7 @@ class OverlayController(
             contentDescription = "Start realtime voice mode",
             compact = true
         ) {
-            onStartVoice()
-            dismissPanel()
+            startVoiceAndMinimizePanel()
         }
         val settingsButton = iconButton(
             tokens = tokens,
@@ -706,6 +705,18 @@ class OverlayController(
                 return false
             }
         })
+    }
+
+    private fun startVoiceAndMinimizePanel() {
+        if (lastTranscriptionState.isRecording) {
+            onCancelTranscription()
+        }
+        anchoredPicker?.dismiss()
+        anchoredPicker = null
+        panelView?.animate()?.cancel()
+        panelScrimView?.animate()?.cancel()
+        finalizePanelDismiss()
+        onStartVoice()
     }
 
     private fun modelDisplayLabel(id: String?): String {
@@ -1181,10 +1192,7 @@ class OverlayController(
             AnchoredPicker.Row(
                 label = "Voice mode",
                 iconRes = R.drawable.ic_voice,
-                onSelect = {
-                    onStartVoice()
-                    dismissPanel()
-                }
+                onSelect = { startVoiceAndMinimizePanel() }
             ),
             AnchoredPicker.Row(
                 label = "Queue steer",
