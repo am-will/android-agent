@@ -27,7 +27,8 @@ class PhoneWebSocketClient(
     private val onRealtimeError: (JSONObject) -> Unit = {},
     private val onRealtimeClosed: (JSONObject) -> Unit = {},
     private val onRealtimeToolResult: (JSONObject) -> Unit = {},
-    private val onRealtimeTaskStatus: (JSONObject) -> Unit = {}
+    private val onRealtimeTaskStatus: (JSONObject) -> Unit = {},
+    private val onChatMessage: (JSONObject) -> Unit = {}
 ) : WebSocketListener() {
     private val client = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
@@ -70,6 +71,79 @@ class PhoneWebSocketClient(
             .put("deviceId", config.deviceId)
             .put("action", "stop")
             .put("reason", reason)
+        socket?.send(message.toString())
+    }
+
+    fun sendChatOpen(sessionKey: String? = null) {
+        val message = JSONObject()
+            .put("type", "chat.open")
+            .put("deviceId", config.deviceId)
+        sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
+        socket?.send(message.toString())
+    }
+
+    fun sendChatMessage(text: String, sessionKey: String? = null, model: String? = null, reasoningEffort: String? = null) {
+        val message = JSONObject()
+            .put("type", "chat.send")
+            .put("deviceId", config.deviceId)
+            .put("text", text)
+        sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
+        model?.takeIf { it.isNotBlank() }?.let { message.put("model", it) }
+        reasoningEffort?.takeIf { it.isNotBlank() }?.let { message.put("reasoningEffort", it) }
+        socket?.send(message.toString())
+    }
+
+    fun sendChatStop(sessionKey: String? = null, runId: String? = null, reason: String = "Stopped from Android chat") {
+        val message = JSONObject()
+            .put("type", "chat.stop")
+            .put("deviceId", config.deviceId)
+            .put("reason", reason)
+        sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
+        runId?.takeIf { it.isNotBlank() }?.let { message.put("runId", it) }
+        socket?.send(message.toString())
+    }
+
+    fun sendChatSelectSession(sessionKey: String) {
+        val message = JSONObject()
+            .put("type", "chat.select_session")
+            .put("deviceId", config.deviceId)
+            .put("sessionKey", sessionKey)
+        socket?.send(message.toString())
+    }
+
+    fun sendChatNewSession(label: String? = null, model: String? = null) {
+        val message = JSONObject()
+            .put("type", "chat.new_session")
+            .put("deviceId", config.deviceId)
+        label?.takeIf { it.isNotBlank() }?.let { message.put("label", it) }
+        model?.takeIf { it.isNotBlank() }?.let { message.put("model", it) }
+        socket?.send(message.toString())
+    }
+
+    fun sendChatSetModel(sessionKey: String?, model: String) {
+        val message = JSONObject()
+            .put("type", "chat.set_model")
+            .put("deviceId", config.deviceId)
+            .put("model", model)
+        sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
+        socket?.send(message.toString())
+    }
+
+    fun sendChatSetReasoning(sessionKey: String?, reasoningEffort: String) {
+        val message = JSONObject()
+            .put("type", "chat.set_reasoning")
+            .put("deviceId", config.deviceId)
+            .put("reasoningEffort", reasoningEffort)
+        sessionKey?.takeIf { it.isNotBlank() }?.let { message.put("sessionKey", it) }
+        socket?.send(message.toString())
+    }
+
+    fun sendChatControlCommand(command: String, args: JSONObject = JSONObject()) {
+        val message = JSONObject()
+            .put("type", "chat.control_command")
+            .put("deviceId", config.deviceId)
+            .put("command", command)
+            .put("args", args)
         socket?.send(message.toString())
     }
 
@@ -122,9 +196,10 @@ class PhoneWebSocketClient(
             .put("token", config.token)
             .put(
                 "capabilities",
-                JSONArray(listOf("accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice"))
+                JSONArray(listOf("accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice", "gateway_chat"))
             )
         webSocket.send(register.toString())
+        sendChatOpen()
         onStatus("Connected and registered as ${config.deviceId}", "info")
     }
 
@@ -136,6 +211,17 @@ class PhoneWebSocketClient(
         when (message.optString("type")) {
             "command" -> handleCommand(webSocket, message)
             "agent_status" -> onStatus(message.optString("text"), message.optString("status", "info"))
+            "chat.state",
+            "chat.history",
+            "chat.delta",
+            "chat.final",
+            "chat.error",
+            "chat.tool_event",
+            "chat.models",
+            "chat.commands",
+            "chat.tools",
+            "chat.sessions",
+            "chat.usage" -> onChatMessage(message)
             "realtime.sdp" -> onRealtimeSdp(message)
             "realtime.transcript_delta" -> onRealtimeTranscriptDelta(message)
             "realtime.item_added" -> onRealtimeItemAdded(message)

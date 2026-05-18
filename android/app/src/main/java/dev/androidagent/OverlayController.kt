@@ -34,6 +34,7 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import dev.androidagent.chat.ChatState
 import dev.androidagent.voice.VoiceRuntimeState
 import dev.androidagent.voice.VoiceRuntimeStatus
 import dev.androidagent.voice.transcription.VoiceTranscriptionState
@@ -78,6 +79,7 @@ class OverlayController(
     private var voiceMuteButton: Button? = null
     private var voiceHangupButton: Button? = null
     private var lastVoiceState = VoiceRuntimeState()
+    private var lastChatState = ChatState()
     private var composerInput: EditText? = null
     private var transcriptionMicButton: ImageButton? = null
     private var transcriptionCancelButton: Button? = null
@@ -194,6 +196,14 @@ class OverlayController(
     fun setVoiceState(state: VoiceRuntimeState) {
         lastVoiceState = state
         mainHandler.post { renderVoiceState(state) }
+    }
+
+    fun setChatState(state: ChatState) {
+        lastChatState = state
+        mainHandler.post {
+            state.status?.let { setStatus(it) }
+            state.error?.let { setStatus(it) }
+        }
     }
 
     fun setTranscriptionState(state: VoiceTranscriptionState) {

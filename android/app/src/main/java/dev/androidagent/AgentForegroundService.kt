@@ -17,6 +17,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
+import dev.androidagent.chat.ChatState
+import dev.androidagent.chat.ChatStateReducer
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
 import dev.androidagent.voice.transcription.VoiceTranscriptionManager
@@ -35,6 +37,7 @@ class AgentForegroundService : Service() {
     private var voiceTranscriptionManager: VoiceTranscriptionManager? = null
     private var lastNotificationText = DEFAULT_NOTIFICATION_TEXT
     private var isAgentTurnActive = false
+    private var chatState = ChatState()
 
     override fun onCreate() {
         super.onCreate()
@@ -45,7 +48,7 @@ class AgentForegroundService : Service() {
         voiceTranscriptionManager = VoiceTranscriptionManager(onStateChanged = ::handleTranscriptionState)
         overlayController = OverlayController(
             context = this,
-            onSubmit = { text -> webSocketClient?.sendUserRequest(text, AgentConfigStore.load(this)) },
+            onSubmit = { text -> submitChatText(text) },
             onStop = { requestStopTurn("Stopped from Android overlay") },
             onDismiss = { stopSelf() },
             onStartVoice = {
@@ -112,8 +115,34 @@ class AgentForegroundService : Service() {
             onRealtimeError = { voiceRuntimeController?.onRealtimeError(it) },
             onRealtimeClosed = { voiceRuntimeController?.onRealtimeClosed(it) },
             onRealtimeToolResult = { voiceRuntimeController?.onRealtimeToolResult(it) },
-            onRealtimeTaskStatus = { voiceRuntimeController?.onRealtimeTaskStatus(it) }
+            onRealtimeTaskStatus = { voiceRuntimeController?.onRealtimeTaskStatus(it) },
+            onChatMessage = { handleChatMessage(it) }
         ).also { it.connect() }
+    }
+
+    private fun submitChatText(text: String) {
+        connectWebSocket()
+        chatState = ChatStateReducer.localUserMessage(chatState, text)
+        overlayController?.setChatState(chatState)
+        webSocketClient?.sendChatMessage(
+            text = text,
+            sessionKey = chatState.sessionKey,
+            model = chatState.selectedModel,
+            reasoningEffort = chatState.reasoningEffort
+        )
+        lastNotificationText = "Sent to OpenClaw"
+        isAgentTurnActive = true
+        updateNotification()
+    }
+
+    private fun handleChatMessage(message: org.json.JSONObject) {
+        serviceScope.launch {
+            chatState = ChatStateReducer.reduce(chatState, message)
+            overlayController?.setChatState(chatState)
+            chatState.status?.takeIf { it.isNotBlank() }?.let { lastNotificationText = it }
+            isAgentTurnActive = chatState.isRunning
+            updateNotification()
+        }
     }
 
     private fun startComposerTranscription() {
@@ -179,6 +208,7 @@ class AgentForegroundService : Service() {
         lastNotificationText = "Stopping active turn..."
         isAgentTurnActive = true
         updateNotification()
+        webSocketClient?.sendChatStop(chatState.sessionKey, chatState.activeRunId, reason)
         webSocketClient?.sendStopRequest(reason)
     }
 

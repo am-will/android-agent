@@ -1,0 +1,473 @@
+package dev.androidagent.chat
+
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
+
+enum class ChatTimelineKind {
+    MESSAGE,
+    TOOL
+}
+
+data class ChatTimelineItem(
+    val id: String,
+    val kind: ChatTimelineKind,
+    val role: String? = null,
+    val text: String = "",
+    val timestamp: Long? = null,
+    val runId: String? = null,
+    val isStreaming: Boolean = false,
+    val toolEvent: ChatToolEvent? = null
+)
+
+data class ChatToolEvent(
+    val eventId: String,
+    val runId: String?,
+    val toolName: String,
+    val title: String,
+    val status: String,
+    val summary: String?,
+    val args: String?,
+    val output: String?,
+    val error: String?,
+    val isExpanded: Boolean = false
+)
+
+data class ChatSessionRow(
+    val key: String,
+    val sessionId: String?,
+    val label: String?,
+    val displayName: String?,
+    val updatedAt: Long?,
+    val model: String?,
+    val modelProvider: String?,
+    val contextTokens: Long?,
+    val inputTokens: Long?,
+    val outputTokens: Long?,
+    val totalTokens: Long?,
+    val estimatedCostUsd: Double?,
+    val fastMode: Boolean?,
+    val hasActiveRun: Boolean?,
+    val thinkingLevel: String?,
+    val verboseLevel: String?
+)
+
+data class ChatModelOption(val id: String, val label: String, val provider: String?, val contextWindow: Long?, val available: Boolean?)
+data class ChatReasoningOption(val id: String, val label: String)
+data class ChatCommandOption(val name: String, val description: String?, val category: String?, val aliases: List<String>, val acceptsArgs: Boolean)
+data class ChatToolSummary(val id: String, val label: String?, val description: String?, val source: String?, val group: String?)
+
+data class ChatUsageSummary(
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val totalTokens: Long? = null,
+    val contextTokens: Long? = null,
+    val estimatedCostUsd: Double? = null
+) {
+    val contextRatio: Float?
+        get() {
+            val total = totalTokens ?: return null
+            val context = contextTokens ?: return null
+            if (context <= 0L) return null
+            return (total.toFloat() / context.toFloat()).coerceIn(0f, 1f)
+        }
+}
+
+data class ChatState(
+    val sessionKey: String? = null,
+    val sessionId: String? = null,
+    val activeRunId: String? = null,
+    val isRunning: Boolean = false,
+    val status: String? = null,
+    val error: String? = null,
+    val selectedModel: String? = null,
+    val reasoningEffort: String? = null,
+    val fastMode: Boolean? = null,
+    val verboseLevel: String? = null,
+    val timeline: List<ChatTimelineItem> = emptyList(),
+    val sessions: List<ChatSessionRow> = emptyList(),
+    val models: List<ChatModelOption> = emptyList(),
+    val reasoningOptions: List<ChatReasoningOption> = defaultReasoningOptions,
+    val commands: List<ChatCommandOption> = emptyList(),
+    val tools: List<ChatToolSummary> = emptyList(),
+    val usage: ChatUsageSummary = ChatUsageSummary()
+) {
+    val latestAssistantText: String?
+        get() = timeline.lastOrNull { it.kind == ChatTimelineKind.MESSAGE && it.role == "assistant" }?.text
+
+    companion object {
+        val defaultReasoningOptions = listOf(
+            ChatReasoningOption("off", "off"),
+            ChatReasoningOption("minimal", "minimal"),
+            ChatReasoningOption("low", "low"),
+            ChatReasoningOption("medium", "medium"),
+            ChatReasoningOption("high", "high"),
+            ChatReasoningOption("xhigh", "xhigh")
+        )
+    }
+}
+
+object ChatStateReducer {
+    fun localUserMessage(state: ChatState, text: String): ChatState {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return state
+        return state.copy(
+            timeline = state.timeline + ChatTimelineItem(
+                id = "local_${UUID.randomUUID()}",
+                kind = ChatTimelineKind.MESSAGE,
+                role = "user",
+                text = trimmed,
+                timestamp = System.currentTimeMillis()
+            ),
+            status = "Sent to OpenClaw",
+            error = null
+        )
+    }
+
+    fun toggleTool(state: ChatState, eventId: String): ChatState {
+        return state.copy(
+            timeline = state.timeline.map { item ->
+                val tool = item.toolEvent
+                if (item.kind == ChatTimelineKind.TOOL && tool?.eventId == eventId) {
+                    item.copy(toolEvent = tool.copy(isExpanded = !tool.isExpanded))
+                } else {
+                    item
+                }
+            }
+        )
+    }
+
+    fun reduce(state: ChatState, message: JSONObject): ChatState {
+        return when (message.optString("type")) {
+            "chat.state" -> reduceState(state, message)
+            "chat.history" -> reduceHistory(state, message)
+            "chat.delta" -> reduceDelta(state, message)
+            "chat.final" -> reduceFinal(state, message)
+            "chat.error" -> reduceError(state, message)
+            "chat.tool_event" -> reduceToolEvent(state, message)
+            "chat.models" -> reduceModels(state, message)
+            "chat.commands" -> state.copy(commands = parseCommands(message.optJSONArray("commands")), error = null)
+            "chat.tools" -> state.copy(
+                sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+                tools = parseTools(message.optJSONArray("tools")),
+                error = null
+            )
+            "chat.sessions" -> reduceSessions(state, message)
+            "chat.usage" -> state.copy(
+                sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+                usage = parseUsage(message.optJSONObject("usage")),
+                error = null
+            )
+            else -> state
+        }
+    }
+
+    private fun reduceState(state: ChatState, message: JSONObject): ChatState {
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            sessionId = message.optNullableString("sessionId") ?: state.sessionId,
+            activeRunId = message.optNullableString("runId"),
+            isRunning = message.optBoolean("isRunning", state.isRunning),
+            status = message.optNullableString("status") ?: state.status,
+            selectedModel = message.optNullableString("model") ?: state.selectedModel,
+            reasoningEffort = message.optNullableString("reasoningEffort") ?: state.reasoningEffort,
+            fastMode = message.optNullableBoolean("fastMode") ?: state.fastMode,
+            verboseLevel = message.optNullableString("verboseLevel") ?: state.verboseLevel,
+            error = null
+        )
+    }
+
+    private fun reduceHistory(state: ChatState, message: JSONObject): ChatState {
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            sessionId = message.optNullableString("sessionId") ?: state.sessionId,
+            timeline = parseHistory(message.optJSONArray("messages")),
+            error = null
+        )
+    }
+
+    private fun reduceDelta(state: ChatState, message: JSONObject): ChatState {
+        val runId = message.optNullableString("runId") ?: state.activeRunId ?: "active"
+        val sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey
+        val delta = message.optString("delta")
+        val replace = message.optBoolean("replace", false)
+        val itemId = "assistant_$runId"
+        val existing = state.timeline.firstOrNull { it.id == itemId }
+        val nextText = if (replace) delta else (existing?.text.orEmpty() + delta)
+        return state.copy(
+            sessionKey = sessionKey,
+            activeRunId = runId,
+            isRunning = true,
+            status = "OpenClaw is responding",
+            timeline = upsertTimeline(state.timeline, ChatTimelineItem(
+                id = itemId,
+                kind = ChatTimelineKind.MESSAGE,
+                role = "assistant",
+                text = nextText,
+                runId = runId,
+                isStreaming = true
+            )),
+            error = null
+        )
+    }
+
+    private fun reduceFinal(state: ChatState, message: JSONObject): ChatState {
+        val runId = message.optNullableString("runId") ?: state.activeRunId ?: "final"
+        val itemId = "assistant_$runId"
+        val text = message.optString("text")
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            activeRunId = null,
+            isRunning = false,
+            status = "OpenClaw finished",
+            timeline = upsertTimeline(state.timeline, ChatTimelineItem(
+                id = itemId,
+                kind = ChatTimelineKind.MESSAGE,
+                role = "assistant",
+                text = text,
+                runId = runId,
+                isStreaming = false
+            )),
+            error = null
+        )
+    }
+
+    private fun reduceError(state: ChatState, message: JSONObject): ChatState {
+        val text = message.optString("message", "OpenClaw chat failed")
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            activeRunId = null,
+            isRunning = false,
+            status = "OpenClaw failed",
+            error = text,
+            timeline = state.timeline + ChatTimelineItem(
+                id = "error_${UUID.randomUUID()}",
+                kind = ChatTimelineKind.MESSAGE,
+                role = "system",
+                text = text,
+                timestamp = System.currentTimeMillis()
+            )
+        )
+    }
+
+    private fun reduceToolEvent(state: ChatState, message: JSONObject): ChatState {
+        val event = ChatToolEvent(
+            eventId = message.optString("eventId", "tool_${UUID.randomUUID()}"),
+            runId = message.optNullableString("runId"),
+            toolName = message.optString("toolName", "tool"),
+            title = message.optString("title", message.optString("toolName", "Tool activity")),
+            status = message.optString("status", "running"),
+            summary = message.optNullableString("summary"),
+            args = compactJson(message.opt("args")),
+            output = compactJson(message.opt("output")),
+            error = message.optNullableString("error")
+        )
+        val existing = state.timeline.firstOrNull { it.id == "tool_${event.eventId}" }?.toolEvent
+        val merged = event.copy(isExpanded = existing?.isExpanded ?: false)
+        return state.copy(
+            sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
+            timeline = upsertTimeline(state.timeline, ChatTimelineItem(
+                id = "tool_${event.eventId}",
+                kind = ChatTimelineKind.TOOL,
+                runId = event.runId,
+                toolEvent = merged
+            )),
+            error = null
+        )
+    }
+
+    private fun reduceModels(state: ChatState, message: JSONObject): ChatState {
+        val reasoning = parseReasoning(message.optJSONArray("reasoningOptions")).ifEmpty { state.reasoningOptions }
+        return state.copy(
+            models = parseModels(message.optJSONArray("models")),
+            reasoningOptions = reasoning,
+            error = null
+        )
+    }
+
+    private fun reduceSessions(state: ChatState, message: JSONObject): ChatState {
+        val sessions = parseSessions(message.optJSONArray("sessions"))
+        val selectedKey = message.optNullableString("selectedSessionKey") ?: state.sessionKey
+        val selected = sessions.firstOrNull { it.key == selectedKey }
+        return state.copy(
+            sessionKey = selectedKey,
+            sessions = sessions,
+            selectedModel = selected?.model ?: state.selectedModel,
+            reasoningEffort = selected?.thinkingLevel ?: state.reasoningEffort,
+            fastMode = selected?.fastMode ?: state.fastMode,
+            verboseLevel = selected?.verboseLevel ?: state.verboseLevel,
+            usage = selected?.let {
+                ChatUsageSummary(
+                    inputTokens = it.inputTokens,
+                    outputTokens = it.outputTokens,
+                    totalTokens = it.totalTokens,
+                    contextTokens = it.contextTokens,
+                    estimatedCostUsd = it.estimatedCostUsd
+                )
+            } ?: state.usage,
+            error = null
+        )
+    }
+
+    private fun upsertTimeline(timeline: List<ChatTimelineItem>, item: ChatTimelineItem): List<ChatTimelineItem> {
+        val index = timeline.indexOfFirst { it.id == item.id }
+        if (index == -1) return timeline + item
+        return timeline.toMutableList().also { it[index] = item }
+    }
+
+    private fun parseHistory(array: JSONArray?): List<ChatTimelineItem> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val text = item.optString("text")
+                if (text.isBlank()) continue
+                add(ChatTimelineItem(
+                    id = item.optNullableString("id") ?: "history_$index",
+                    kind = ChatTimelineKind.MESSAGE,
+                    role = item.optString("role", "assistant"),
+                    text = text,
+                    timestamp = item.optNullableLong("timestamp")
+                ))
+            }
+        }
+    }
+
+    private fun parseSessions(array: JSONArray?): List<ChatSessionRow> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val key = item.optNullableString("key") ?: continue
+                add(ChatSessionRow(
+                    key = key,
+                    sessionId = item.optNullableString("sessionId"),
+                    label = item.optNullableString("label"),
+                    displayName = item.optNullableString("displayName"),
+                    updatedAt = item.optNullableLong("updatedAt"),
+                    model = item.optNullableString("model"),
+                    modelProvider = item.optNullableString("modelProvider"),
+                    contextTokens = item.optNullableLong("contextTokens"),
+                    inputTokens = item.optNullableLong("inputTokens"),
+                    outputTokens = item.optNullableLong("outputTokens"),
+                    totalTokens = item.optNullableLong("totalTokens"),
+                    estimatedCostUsd = item.optNullableDouble("estimatedCostUsd"),
+                    fastMode = item.optNullableBoolean("fastMode"),
+                    hasActiveRun = item.optNullableBoolean("hasActiveRun"),
+                    thinkingLevel = item.optNullableString("thinkingLevel"),
+                    verboseLevel = item.optNullableString("verboseLevel")
+                ))
+            }
+        }
+    }
+
+    private fun parseModels(array: JSONArray?): List<ChatModelOption> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optNullableString("id") ?: continue
+                add(ChatModelOption(
+                    id = id,
+                    label = item.optString("label", id),
+                    provider = item.optNullableString("provider"),
+                    contextWindow = item.optNullableLong("contextWindow"),
+                    available = item.optNullableBoolean("available")
+                ))
+            }
+        }
+    }
+
+    private fun parseReasoning(array: JSONArray?): List<ChatReasoningOption> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optNullableString("id") ?: continue
+                add(ChatReasoningOption(id = id, label = item.optString("label", id)))
+            }
+        }
+    }
+
+    private fun parseCommands(array: JSONArray?): List<ChatCommandOption> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val name = item.optNullableString("name") ?: continue
+                add(ChatCommandOption(
+                    name = name,
+                    description = item.optNullableString("description"),
+                    category = item.optNullableString("category"),
+                    aliases = item.optJSONArray("textAliases").toStringList(),
+                    acceptsArgs = item.optBoolean("acceptsArgs", false)
+                ))
+            }
+        }
+    }
+
+    private fun parseTools(array: JSONArray?): List<ChatToolSummary> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optNullableString("id") ?: continue
+                add(ChatToolSummary(
+                    id = id,
+                    label = item.optNullableString("label"),
+                    description = item.optNullableString("description"),
+                    source = item.optNullableString("source"),
+                    group = item.optNullableString("group")
+                ))
+            }
+        }
+    }
+
+    private fun parseUsage(value: JSONObject?): ChatUsageSummary {
+        if (value == null) return ChatUsageSummary()
+        return ChatUsageSummary(
+            inputTokens = value.optNullableLong("inputTokens"),
+            outputTokens = value.optNullableLong("outputTokens"),
+            totalTokens = value.optNullableLong("totalTokens"),
+            contextTokens = value.optNullableLong("contextTokens"),
+            estimatedCostUsd = value.optNullableDouble("estimatedCostUsd")
+        )
+    }
+
+    private fun compactJson(value: Any?): String? {
+        return when (value) {
+            null, JSONObject.NULL -> null
+            is JSONObject, is JSONArray -> value.toString()
+            else -> value.toString().takeIf { it.isNotBlank() }
+        }
+    }
+
+    private fun JSONArray?.toStringList(): List<String> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                optString(index).takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+        }
+    }
+
+    private fun JSONObject.optNullableString(name: String): String? {
+        if (!has(name) || isNull(name)) return null
+        return optString(name).takeIf { it.isNotBlank() }
+    }
+
+    private fun JSONObject.optNullableLong(name: String): Long? {
+        if (!has(name) || isNull(name)) return null
+        return optLong(name)
+    }
+
+    private fun JSONObject.optNullableDouble(name: String): Double? {
+        if (!has(name) || isNull(name)) return null
+        return optDouble(name)
+    }
+
+    private fun JSONObject.optNullableBoolean(name: String): Boolean? {
+        if (!has(name) || isNull(name)) return null
+        return optBoolean(name)
+    }
+}
