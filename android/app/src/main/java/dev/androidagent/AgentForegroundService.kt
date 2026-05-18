@@ -298,13 +298,14 @@ class AgentForegroundService : Service() {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, flags)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification_bubble)
+            .setColor(0xFF245BFF.toInt())
             .setContentTitle(if (isAgentTurnActive) "Open Claw Agent working" else "Open Claw Agent active")
             .setContentText(lastNotificationText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(lastNotificationText))
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Turn", stopPendingIntent)
+            .addAction(R.drawable.ic_close, "Stop Turn", stopPendingIntent)
             .build()
     }
 
