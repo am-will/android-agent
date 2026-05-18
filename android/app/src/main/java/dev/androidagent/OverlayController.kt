@@ -584,6 +584,13 @@ class OverlayController(
                 radius = dp(DesignTokens.Radius.pill).toFloat()
             )
         }
+        val handleArea = FrameLayout(context).apply {
+            addView(handle, FrameLayout.LayoutParams(
+                dp(34),
+                dp(4)
+            ).apply { gravity = Gravity.CENTER })
+            attachSwipeToDismiss(this)
+        }
 
         val titleText = TextView(context).apply {
             text = "OpenClaw"
@@ -625,9 +632,10 @@ class OverlayController(
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.xs))
-            addView(handle, LinearLayout.LayoutParams(dp(30), dp(4)).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-            })
+            addView(handleArea, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(20)
+            ).apply { gravity = Gravity.CENTER_HORIZONTAL })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -636,6 +644,39 @@ class OverlayController(
                 addView(actions)
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
+    }
+
+    private fun attachSwipeToDismiss(target: View) {
+        val threshold = dp(38).toFloat()
+        target.setOnTouchListener(object : View.OnTouchListener {
+            private var startY = 0f
+            private var tracking = false
+            override fun onTouch(v: View, event: android.view.MotionEvent): Boolean {
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        startY = event.rawY
+                        tracking = true
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        if (!tracking) return false
+                        val dy = event.rawY - startY
+                        if (dy > threshold) {
+                            tracking = false
+                            dismissPanel()
+                            return true
+                        }
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        tracking = false
+                        return true
+                    }
+                }
+                return false
+            }
+        })
     }
 
     private fun modelDisplayLabel(id: String?): String {
