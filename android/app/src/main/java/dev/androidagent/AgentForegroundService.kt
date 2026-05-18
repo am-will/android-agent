@@ -19,6 +19,7 @@ import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatStateReducer
+import dev.androidagent.chat.ChatUsageSummary
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
 import dev.androidagent.voice.transcription.VoiceTranscriptionManager
@@ -62,7 +63,20 @@ class AgentForegroundService : Service() {
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() },
             onSelectChatSession = { sessionKey -> webSocketClient?.sendChatSelectSession(sessionKey) },
-            onNewChatSession = { webSocketClient?.sendChatNewSession() },
+            onNewChatSession = {
+                chatState = chatState.copy(
+                    sessionKey = null,
+                    sessionId = null,
+                    activeRunId = null,
+                    isRunning = false,
+                    status = "Started a new chat",
+                    error = null,
+                    timeline = emptyList(),
+                    usage = ChatUsageSummary()
+                )
+                overlayController?.setChatState(chatState)
+                webSocketClient?.sendChatNewSession()
+            },
             onSetChatModel = { model -> webSocketClient?.sendChatSetModel(chatState.sessionKey, model) },
             onSetChatReasoning = { reasoning -> webSocketClient?.sendChatSetReasoning(chatState.sessionKey, reasoning) },
             onChatControlCommand = { command, args -> webSocketClient?.sendChatControlCommand(command, args) },

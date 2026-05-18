@@ -19,6 +19,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.text.method.ScrollingMovementMethod
 import android.util.TypedValue
 import android.view.Gravity
@@ -106,6 +108,8 @@ class OverlayController(
     private var voiceSurfaceForceHidden = false
     private var panelDismissAnimating = false
     private var lastChatState = ChatState()
+    private var showToolCalls = true
+    private var suppressSlashAutocomplete = false
     private var historyContainer: LinearLayout? = null
     private var historyScrollView: ScrollView? = null
     private var composerContainer: LinearLayout? = null
@@ -132,6 +136,8 @@ class OverlayController(
     private var anchoredPicker: AnchoredPicker? = null
     private var modelTitleSubtext: TextView? = null
     private var plusButton: ImageButton? = null
+
+    private data class SlashToken(val start: Int, val end: Int, val query: String)
 
     fun show() {
         if (!Settings.canDrawOverlays(context) || bubbleView != null || automationSuppressionDepth > 0) {
@@ -739,7 +745,17 @@ class OverlayController(
                         mainHandler.postDelayed({ keepAboveKeyboard(panel, params) }, 300)
                     }
                 }
+                maybeShowSlashCommands(this)
             }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    if (!suppressSlashAutocomplete) {
+                        maybeShowSlashCommands(this@apply)
+                    }
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
             composerInput = this
         }
     }
@@ -919,10 +935,15 @@ class OverlayController(
         return created
     }
 
-    private fun showAnchoredPicker(anchor: View, title: String, sections: List<AnchoredPicker.Section>) {
+    private fun showAnchoredPicker(
+        anchor: View,
+        title: String,
+        sections: List<AnchoredPicker.Section>,
+        toggleSameAnchor: Boolean = true
+    ) {
         val host = panelHost ?: return
         val picker = ensurePicker()
-        if (picker.isShowingFor(anchor)) {
+        if (toggleSameAnchor && picker.isShowingFor(anchor)) {
             picker.dismiss()
             return
         }
@@ -1058,7 +1079,11 @@ class OverlayController(
         sessionRows.add(AnchoredPicker.Row(
             label = "New chat",
             iconRes = R.drawable.ic_plus,
-            onSelect = { onNewChatSession(); setStatus("Started a new chat session") }
+            onSelect = {
+                onNewChatSession()
+                composerInput?.setText("")
+                setStatus("Started a new chat session")
+            }
         ))
         if (sessions.isNotEmpty()) {
             val sessionCount = sessions.size.coerceAtMost(20)
@@ -1066,6 +1091,7 @@ class OverlayController(
                 label = "Previous chats",
                 sublabel = "Last $sessionCount",
                 iconRes = R.drawable.ic_session,
+                dismissOnSelect = false,
                 onSelect = { showSessionsMenu() }
             ))
         }
@@ -1111,6 +1137,17 @@ class OverlayController(
 
         val voiceRows = listOf(
             AnchoredPicker.Row(
+                label = "Show Tool Calls: ${if (showToolCalls) "On" else "Off"}",
+                sublabel = if (showToolCalls) "Tap to hide bash, MCP, web search, and other tool activity" else "Tap to show tool activity",
+                iconRes = R.drawable.ic_tools,
+                selected = showToolCalls,
+                onSelect = {
+                    showToolCalls = !showToolCalls
+                    setStatus("Tool calls ${if (showToolCalls) "shown" else "hidden"}")
+                    renderTimeline(lastChatState)
+                }
+            ),
+            AnchoredPicker.Row(
                 label = "Voice mode",
                 iconRes = R.drawable.ic_voice,
                 onSelect = {
@@ -1126,6 +1163,7 @@ class OverlayController(
             AnchoredPicker.Row(
                 label = "Usage",
                 iconRes = R.drawable.ic_usage,
+                dismissOnSelect = false,
                 onSelect = { showUsageControls() }
             ),
             AnchoredPicker.Row(
@@ -1141,7 +1179,7 @@ class OverlayController(
         sections.add(AnchoredPicker.Section("Run mode", modeRows))
         sections.add(AnchoredPicker.Section("More", voiceRows))
 
-        showAnchoredPicker(plusAnchor, "Add", sections)
+        showAnchoredPicker(plusAnchor, "Menu", sections)
     }
 
     private fun showSessionsMenu() {
@@ -1161,7 +1199,7 @@ class OverlayController(
                 onSelect = { onSelectChatSession(session.key) }
             )
         }
-        showAnchoredPicker(anchor, "Previous chats", listOf(AnchoredPicker.Section(null, rows)))
+        showAnchoredPicker(anchor, "Previous chats", listOf(AnchoredPicker.Section(null, rows)), toggleSameAnchor = false)
     }
 
     private fun showUsageControls() {
@@ -1203,7 +1241,7 @@ class OverlayController(
                 onSelect = { onChatControlCommand("status", JSONObject()) }
             )
         )
-        showAnchoredPicker(anchor, "Usage", listOf(AnchoredPicker.Section(null, rows)))
+        showAnchoredPicker(anchor, "Usage", listOf(AnchoredPicker.Section(null, rows)), toggleSameAnchor = false)
     }
 
     private fun insertComposerText(text: String) {
@@ -1213,6 +1251,82 @@ class OverlayController(
         val next = existing + separator + text
         input.setText(next)
         input.setSelection(next.length)
+    }
+
+    private fun maybeShowSlashCommands(input: EditText) {
+        val token = currentSlashToken(input)
+        if (token == null) {
+            if (anchoredPicker?.isShowingFor(input) == true) {
+                anchoredPicker?.dismiss()
+            }
+            return
+        }
+        val commands = matchingSlashCommands(token.query)
+        if (commands.isEmpty()) {
+            if (anchoredPicker?.isShowingFor(input) == true) {
+                anchoredPicker?.dismiss()
+            }
+            return
+        }
+        val rows = commands.map { command ->
+            val text = slashCommandText(command)
+            AnchoredPicker.Row(
+                label = text,
+                sublabel = command.description?.take(72),
+                iconRes = R.drawable.ic_command,
+                onSelect = { autocompleteSlashCommand(input, token, text) }
+            )
+        }
+        showAnchoredPicker(
+            anchor = input,
+            title = "Commands",
+            sections = listOf(AnchoredPicker.Section(null, rows)),
+            toggleSameAnchor = false
+        )
+    }
+
+    private fun currentSlashToken(input: EditText): SlashToken? {
+        val text = input.text?.toString().orEmpty()
+        val cursor = input.selectionStart.coerceAtLeast(0).coerceAtMost(text.length)
+        val start = text.lastIndexOfAny(charArrayOf(' ', '\n', '\t'), (cursor - 1).coerceAtLeast(0))
+            .let { if (it < 0) 0 else it + 1 }
+        if (start >= text.length || text.getOrNull(start) != '/') return null
+        val end = cursor
+        if (end < start + 1) return null
+        val token = text.substring(start, end)
+        if (token.drop(1).any { it.isWhitespace() }) return null
+        return SlashToken(start = start, end = end, query = token.drop(1))
+    }
+
+    private fun matchingSlashCommands(query: String): List<dev.androidagent.chat.ChatCommandOption> {
+        val normalized = query.trimStart('/').lowercase()
+        return lastChatState.commands
+            .filter { command ->
+                if (normalized.isBlank()) {
+                    true
+                } else {
+                    command.name.lowercase().startsWith(normalized) ||
+                        command.aliases.any { alias -> alias.trimStart('/').lowercase().startsWith(normalized) }
+                }
+            }
+            .take(20)
+    }
+
+    private fun slashCommandText(command: dev.androidagent.chat.ChatCommandOption): String {
+        return command.aliases.firstOrNull()?.takeIf { it.startsWith("/") } ?: "/${command.name}"
+    }
+
+    private fun autocompleteSlashCommand(input: EditText, token: SlashToken, commandText: String) {
+        val current = input.text?.toString().orEmpty()
+        val safeStart = token.start.coerceIn(0, current.length)
+        val safeEnd = token.end.coerceIn(safeStart, current.length)
+        val replacement = "$commandText "
+        val next = current.replaceRange(safeStart, safeEnd, replacement)
+        suppressSlashAutocomplete = true
+        input.setText(next)
+        input.setSelection((safeStart + replacement.length).coerceAtMost(next.length))
+        suppressSlashAutocomplete = false
+        input.requestFocus()
     }
 
     private fun renderChatState(state: ChatState) {
@@ -1274,7 +1388,13 @@ class OverlayController(
         if (state.timeline.isEmpty()) {
             container.addView(emptyHistoryView(tokens))
         } else {
-            state.timeline.forEach { item ->
+            val visibleItems = state.timeline.filter { item ->
+                showToolCalls || item.kind != ChatTimelineKind.TOOL
+            }
+            if (visibleItems.isEmpty()) {
+                container.addView(emptyHistoryView(tokens))
+            }
+            visibleItems.forEach { item ->
                 container.addView(when (item.kind) {
                     ChatTimelineKind.MESSAGE -> messageBubble(item, tokens)
                     ChatTimelineKind.TOOL -> toolRow(item, tokens)

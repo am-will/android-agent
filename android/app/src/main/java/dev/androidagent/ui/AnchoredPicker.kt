@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -42,6 +43,7 @@ class AnchoredPicker(
         val selected: Boolean = false,
         val destructive: Boolean = false,
         val enabled: Boolean = true,
+        val dismissOnSelect: Boolean = true,
         val onSelect: () -> Unit
     )
 
@@ -230,10 +232,24 @@ class AnchoredPicker(
         }
 
         if (!title.isNullOrBlank()) {
-            container.addView(TextView(context).apply {
-                text = title
-                Typography.applyOverline(this, tokens)
-                setPadding(dp(context, DesignTokens.Spacing.sm), dp(context, DesignTokens.Spacing.xs), dp(context, DesignTokens.Spacing.sm), dp(context, DesignTokens.Spacing.sm))
+            container.addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(context, DesignTokens.Spacing.sm), dp(context, DesignTokens.Spacing.xs), dp(context, DesignTokens.Spacing.xs), dp(context, DesignTokens.Spacing.sm))
+                addView(TextView(context).apply {
+                    text = title.uppercase()
+                    Typography.applyOverline(this, tokens)
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(ImageButton(context).apply {
+                    setImageResource(R.drawable.ic_close)
+                    setColorFilter(tokens.secondaryText)
+                    background = Drawables.pillSurface(context, tokens)
+                    backgroundTintList = null
+                    contentDescription = "Close menu"
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    setPadding(dp(context, 6), dp(context, 6), dp(context, 6), dp(context, 6))
+                    setOnClickListener { dismiss() }
+                }, LinearLayout.LayoutParams(dp(context, 28), dp(context, 28)))
             })
         }
 
@@ -313,7 +329,9 @@ class AnchoredPicker(
             if (row.enabled) {
                 setOnClickListener {
                     row.onSelect()
-                    dismiss()
+                    if (row.dismissOnSelect) {
+                        dismiss()
+                    }
                 }
             }
         }
