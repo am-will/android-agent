@@ -1113,6 +1113,8 @@ class OverlayController(
         }
 
         val fastModeOn = lastChatState.fastMode == true
+        val verboseMode = normalizedVerboseLevel(lastChatState.verboseLevel)
+        val nextVerboseMode = nextVerboseLevel(verboseMode)
         val modeRows = listOf(
             AnchoredPicker.Row(
                 label = "Fast mode: ${if (fastModeOn) "On" else "Off"}",
@@ -1130,10 +1132,18 @@ class OverlayController(
                 }
             ),
             AnchoredPicker.Row(
-                label = "Verbose: high",
+                label = "Verbose: ${verboseMode.replaceFirstChar { it.uppercase() }}",
+                sublabel = "Tap for ${nextVerboseMode.replaceFirstChar { it.uppercase() }}",
                 iconRes = R.drawable.ic_command,
-                selected = lastChatState.verboseLevel == "high",
-                onSelect = { onChatControlCommand("verbose", JSONObject().put("level", "high")); setStatus("Verbose: high") }
+                selected = verboseMode != "off",
+                dismissOnSelect = false,
+                onSelect = {
+                    lastChatState = lastChatState.copy(verboseLevel = nextVerboseMode, status = "Verbose: $nextVerboseMode")
+                    renderChatState(lastChatState)
+                    onChatControlCommand("verbose", JSONObject().put("level", nextVerboseMode))
+                    setStatus("Verbose: $nextVerboseMode")
+                    showPlusMenu(replace = true)
+                }
             ),
             AnchoredPicker.Row(
                 label = "Refresh status",
@@ -1189,6 +1199,22 @@ class OverlayController(
         sections.add(AnchoredPicker.Section("More", voiceRows))
 
         showAnchoredPicker(plusAnchor, "Menu", sections, toggleSameAnchor = !replace)
+    }
+
+    private fun normalizedVerboseLevel(level: String?): String {
+        return when (level?.lowercase()?.trim()) {
+            "on", "full" -> level.lowercase().trim()
+            "high", "true" -> "on"
+            else -> "off"
+        }
+    }
+
+    private fun nextVerboseLevel(current: String): String {
+        return when (current) {
+            "off" -> "on"
+            "on" -> "full"
+            else -> "off"
+        }
     }
 
     private fun showSessionsMenu() {

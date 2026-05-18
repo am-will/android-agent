@@ -162,7 +162,7 @@ private class ShimmerTextView(context: Context, private var tokens: ThemeTokens)
         buildShader()
         if (animator?.isRunning == true) return
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 1400
+            duration = 3600
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener {

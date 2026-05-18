@@ -180,7 +180,8 @@ export class OpenClawChatBridge {
       return;
     }
     const normalized = command.startsWith("/") ? command.slice(1).trim() : command;
-    const name = normalized.split(/\s+/, 1)[0] ?? "";
+    const [name = "", ...parts] = normalized.split(/\s+/);
+    const firstArg = parts[0];
 
     if (name === "new") {
       await this.newSession({
@@ -198,13 +199,23 @@ export class OpenClawChatBridge {
     }
 
     if (name === "fast") {
-      const enabled = typeof message.args.enabled === "boolean" ? message.args.enabled : undefined;
+      const enabled = typeof message.args.enabled === "boolean"
+        ? message.args.enabled
+        : firstArg === "off"
+          ? false
+          : firstArg === "on"
+            ? true
+            : undefined;
       await this.sendSlashCommand(message.deviceId, `/fast ${enabled === false ? "off" : "on"}`, state.sessionKey, "Updating fast mode");
       return;
     }
 
     if (name === "verbose") {
-      const level = typeof message.args.level === "string" && message.args.level.trim() ? message.args.level.trim() : "on";
+      const level = typeof message.args.level === "string" && message.args.level.trim()
+        ? message.args.level.trim()
+        : firstArg && ["on", "off", "full"].includes(firstArg)
+          ? firstArg
+          : "on";
       await this.sendSlashCommand(message.deviceId, `/verbose ${level}`, state.sessionKey, "Updating verbosity");
       return;
     }
@@ -392,13 +403,34 @@ export class OpenClawChatBridge {
   private handleGatewayAgentEvent(payload: unknown): void {
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const runId = typeof record.runId === "string" ? record.runId : undefined;
+    const sessionKey = typeof record.sessionKey === "string" ? record.sessionKey : undefined;
     for (const [deviceId, state] of this.devices) {
       if (runId && state.runId && runId !== state.runId) {
+        continue;
+      }
+      if (sessionKey && sessionKey !== state.sessionKey) {
+        continue;
+      }
+      const chatMessage = mapGatewayChatEvent(deviceId, payload);
+      if (chatMessage && (!("sessionKey" in chatMessage) || chatMessage.sessionKey === state.sessionKey)) {
+        this.sendChat(deviceId, chatMessage);
+        if (chatMessage.type === "chat.final" || chatMessage.type === "chat.error") {
+          state.runId = null;
+          this.sendState(deviceId, chatMessage.type === "chat.final" ? "OpenClaw finished" : "OpenClaw failed");
+          void this.refreshMetadata(deviceId);
+          void this.sendHistory(deviceId);
+        }
         continue;
       }
       const toolEvent = normalizeGatewayToolEvent(deviceId, state.sessionKey, payload);
       if (toolEvent) {
         this.sendChat(deviceId, toolEvent);
+      }
+      if (record.type === "run.completed") {
+        state.runId = null;
+        this.sendState(deviceId, "OpenClaw finished");
+        void this.refreshMetadata(deviceId);
+        void this.sendHistory(deviceId);
       }
     }
   }
