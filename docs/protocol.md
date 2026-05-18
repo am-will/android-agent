@@ -9,7 +9,7 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
   "type": "register",
   "deviceId": "openclaw-agent",
   "token": "12345678",
-  "capabilities": ["accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice"]
+  "capabilities": ["accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice", "gateway_chat"]
 }
 ```
 
@@ -93,6 +93,124 @@ Android can ask the bridge to stop the active phone-control turn. The same messa
   "reason": "Stopped from Android notification"
 }
 ```
+
+## Gateway Chat
+
+The large Android overlay uses explicit `chat.*` messages for OpenClaw Gateway-backed session chat. The legacy `user_request` message remains available for compatibility, but normal typed overlay submissions use `chat.send`.
+
+Android opens or refreshes the selected Gateway session after registration:
+
+```json
+{
+  "type": "chat.open",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent"
+}
+```
+
+Android sends user text, optional model, and optional reasoning selection:
+
+```json
+{
+  "type": "chat.send",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "text": "Summarize my current project status",
+  "model": "openai-codex/gpt-5.5",
+  "reasoningEffort": "high"
+}
+```
+
+Android can stop active chat work, switch or create sessions, update model/reasoning, and invoke safe UI controls:
+
+```json
+{ "type": "chat.stop", "deviceId": "openclaw-agent", "sessionKey": "agent:main:explicit:open-claw-agent", "runId": "run_123" }
+```
+
+```json
+{ "type": "chat.select_session", "deviceId": "openclaw-agent", "sessionKey": "agent:main:main" }
+```
+
+```json
+{ "type": "chat.new_session", "deviceId": "openclaw-agent", "label": "Android bubble" }
+```
+
+```json
+{ "type": "chat.set_model", "deviceId": "openclaw-agent", "sessionKey": "agent:main:main", "model": "openai-codex/gpt-5.5" }
+```
+
+```json
+{ "type": "chat.set_reasoning", "deviceId": "openclaw-agent", "sessionKey": "agent:main:main", "reasoningEffort": "medium" }
+```
+
+```json
+{ "type": "chat.control_command", "deviceId": "openclaw-agent", "command": "fast", "args": { "enabled": true } }
+```
+
+The bridge returns session state, history, metadata, stream deltas, final text, errors, and expandable tool events:
+
+```json
+{
+  "type": "chat.state",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123",
+  "isRunning": true,
+  "status": "OpenClaw is working",
+  "model": "gpt-5.5",
+  "reasoningEffort": "high",
+  "fastMode": true
+}
+```
+
+```json
+{
+  "type": "chat.history",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "messages": [
+    { "id": "u1", "role": "user", "text": "Hello", "timestamp": 1779070000000 },
+    { "id": "a1", "role": "assistant", "text": "Hi.", "timestamp": 1779070001000 }
+  ]
+}
+```
+
+```json
+{
+  "type": "chat.delta",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123",
+  "delta": "Working"
+}
+```
+
+```json
+{
+  "type": "chat.final",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123",
+  "text": "Done."
+}
+```
+
+```json
+{
+  "type": "chat.tool_event",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123",
+  "eventId": "tool_1",
+  "toolName": "exec",
+  "title": "Ran npm test",
+  "status": "completed",
+  "args": { "command": "npm test" },
+  "output": "ok"
+}
+```
+
+Metadata messages are `chat.models`, `chat.commands`, `chat.tools`, `chat.sessions`, and `chat.usage`. The Android UI treats all of them as replaceable snapshots for its local chat state.
 
 ## Realtime Voice
 

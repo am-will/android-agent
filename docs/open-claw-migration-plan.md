@@ -14,9 +14,11 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 ## Implementation Status
 
 - Default dispatcher selection now uses `PHONE_AGENT_DISPATCHER=openclaw` and `OpenClawSessionClient`.
-- `OpenClawSessionClient` delegates bubble requests to `openclaw agent --json` with a stable `OPENCLAW_AGENT_SESSION_ID`.
+- The Android chat overlay now uses the OpenClaw Gateway WebSocket path for primary session chat: `chat.history`, `chat.send`, `chat.abort`, `sessions.*`, `models.list`, `commands.list`, and `tools.effective`.
+- `OpenClawSessionClient` still delegates legacy request paths and realtime delegated tasks to `openclaw agent --json` with a stable `OPENCLAW_AGENT_SESSION_ID`.
 - Realtime voice exposes `delegate_openclaw_task` for general remote-PC work and keeps `run_phone_task` for explicit Android phone work.
 - `npm run openclaw:mcp` registers the existing `android-phone` MCP server with OpenClaw, so phone tools are optional capabilities of the OpenClaw session.
+- The Android bubble now opens a large chat modal with scrollable Gateway history, a bottom composer, model/reasoning/session controls, usage summary, and expandable tool rows.
 - The copied Codex app-server adapter remains available only as `PHONE_AGENT_DISPATCHER=codex` legacy compatibility.
 
 ## Product Principles
@@ -31,7 +33,7 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 1. Android keeps connecting to the PC bridge over `/phone`.
 2. Bubble text requests are routed to Open Claw as general delegated tasks by default.
 3. Android voice keeps using OpenAI Realtime through the PC bridge; completed voice intents route to the same Open Claw task endpoint.
-4. The PC bridge streams Open Claw status, final answers, and errors back to the bubble.
+4. The PC bridge streams Gateway chat deltas, final answers, errors, metadata, and tool events back to the bubble.
 5. Open Claw performs most work on the remote PC using its normal desktop/session capabilities.
 6. The bridge exposes Android phone-control tools to Open Claw for optional phone interaction.
 7. When Open Claw calls a phone tool, the local tool layer forwards commands through the bridge to Android and returns observations/results.
@@ -39,8 +41,8 @@ The best path is to keep the Android bridge, Android overlay, and OpenAI Realtim
 
 ## Remaining Follow-Ups
 
-- A direct Gateway/WebSocket adapter could replace the CLI adapter later for richer streaming and native mid-task steering.
-- Mid-task steering currently depends on the adapter surface; with the CLI path, stop plus follow-up is the reliable fallback.
+- Realtime voice still delegates through the dispatcher path; it can be moved to the Gateway chat/session path after voice behavior is revalidated.
+- Mid-task steering currently depends on the path: Gateway chat supports abort and slash/session controls, while the CLI dispatcher path still uses stop plus follow-up as the reliable fallback.
 - General OpenClaw tasks currently serialize through the bridge's single active adapter process; future work can use OpenClaw's own concurrency model if needed.
 - How should the bridge select a remote PC/session when multiple Open Claw sessions are available?
 - What auth boundary is required between this bridge and the remote PC session beyond the local prototype token?
