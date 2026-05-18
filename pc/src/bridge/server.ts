@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer } from "ws";
 import { AuditLog } from "./AuditLog.js";
 import { Dispatcher } from "../dispatcher/dispatcher.js";
+import { OpenClawChatBridge } from "./OpenClawChatBridge.js";
 import { OpenAiRealtimeClient, type OpenAiRealtimeSession } from "./OpenAiRealtimeClient.js";
 import { OpenAiWebSearchClient } from "./OpenAiWebSearchClient.js";
 import { RealtimeTaskManager } from "./RealtimeTaskManager.js";
@@ -20,6 +21,7 @@ const config = getBridgeConfig();
 const audit = new AuditLog();
 const hub = new PhoneHub(config.defaultDeviceId, audit);
 const dispatcher = new Dispatcher(hub, audit);
+const chatBridge = new OpenClawChatBridge(config, hub, dispatcher, audit);
 const realtimeClient = new OpenAiRealtimeClient(config);
 const webSearchClient = new OpenAiWebSearchClient(config);
 const realtimeTaskManager = new RealtimeTaskManager({
@@ -290,6 +292,101 @@ wss.on("connection", (socket) => {
             });
           });
         }
+        return;
+      }
+
+      if (message.type === "chat.open") {
+        chatBridge.open(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            sessionKey: message.sessionKey,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.send") {
+        chatBridge.send(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            sessionKey: message.sessionKey,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.stop") {
+        chatBridge.stop(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            sessionKey: message.sessionKey,
+            runId: message.runId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.select_session") {
+        chatBridge.selectSession(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            sessionKey: message.sessionKey,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.new_session") {
+        chatBridge.newSession(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.set_model") {
+        chatBridge.setModel(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            sessionKey: message.sessionKey,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.set_reasoning") {
+        chatBridge.setReasoning(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            sessionKey: message.sessionKey,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+        return;
+      }
+
+      if (message.type === "chat.control_command") {
+        chatBridge.controlCommand(message).catch((error) => {
+          hub.sendChat(message.deviceId, {
+            type: "chat.error",
+            deviceId: message.deviceId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
         return;
       }
 

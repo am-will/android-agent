@@ -2,6 +2,7 @@ import { WebSocket } from "ws";
 import {
   DEFAULT_TIMEOUT_MS,
   type AgentStatusMessage,
+  type ChatOutboundMessage,
   type CommandMessage,
   type PhoneOutboundMessage,
   type PhoneCommandRequest,
@@ -132,6 +133,10 @@ export class PhoneHub {
   }
 
   sendRealtime(deviceId: string, message: RealtimeOutboundMessage): void {
+    this.sendMessage(deviceId, message);
+  }
+
+  sendChat(deviceId: string, message: ChatOutboundMessage): void {
     this.sendMessage(deviceId, message);
   }
 

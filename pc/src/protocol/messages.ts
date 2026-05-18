@@ -109,11 +109,79 @@ export const agentControlMessageSchema = z.object({
   reason: z.string().optional()
 });
 
+export const chatOpenMessageSchema = z.object({
+  type: z.literal("chat.open"),
+  deviceId: z.string().min(1),
+  sessionKey: z.string().min(1).optional()
+});
+
+export const chatSendMessageSchema = z.object({
+  type: z.literal("chat.send"),
+  deviceId: z.string().min(1),
+  text: z.string().min(1),
+  sessionKey: z.string().min(1).optional(),
+  sessionId: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  reasoningEffort: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(1).optional()
+});
+
+export const chatStopMessageSchema = z.object({
+  type: z.literal("chat.stop"),
+  deviceId: z.string().min(1),
+  sessionKey: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+  reason: z.string().optional()
+});
+
+export const chatSelectSessionMessageSchema = z.object({
+  type: z.literal("chat.select_session"),
+  deviceId: z.string().min(1),
+  sessionKey: z.string().min(1)
+});
+
+export const chatNewSessionMessageSchema = z.object({
+  type: z.literal("chat.new_session"),
+  deviceId: z.string().min(1),
+  key: z.string().min(1).optional(),
+  label: z.string().min(1).optional(),
+  model: z.string().min(1).optional()
+});
+
+export const chatSetModelMessageSchema = z.object({
+  type: z.literal("chat.set_model"),
+  deviceId: z.string().min(1),
+  sessionKey: z.string().min(1).optional(),
+  model: z.string().min(1)
+});
+
+export const chatSetReasoningMessageSchema = z.object({
+  type: z.literal("chat.set_reasoning"),
+  deviceId: z.string().min(1),
+  sessionKey: z.string().min(1).optional(),
+  reasoningEffort: z.string().min(1)
+});
+
+export const chatControlCommandMessageSchema = z.object({
+  type: z.literal("chat.control_command"),
+  deviceId: z.string().min(1),
+  command: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).default({})
+});
+
 export const inboundPhoneMessageSchema = z.discriminatedUnion("type", [
   registerMessageSchema,
   resultMessageSchema,
   userRequestMessageSchema,
   agentControlMessageSchema,
+  chatOpenMessageSchema,
+  chatSendMessageSchema,
+  chatStopMessageSchema,
+  chatSelectSessionMessageSchema,
+  chatNewSessionMessageSchema,
+  chatSetModelMessageSchema,
+  chatSetReasoningMessageSchema,
+  chatControlCommandMessageSchema,
   realtimeStartMessageSchema,
   realtimeStopMessageSchema,
   realtimeToolCallMessageSchema
@@ -129,6 +197,14 @@ export type RealtimeStopMessage = z.infer<typeof realtimeStopMessageSchema>;
 export type RealtimeToolCallMessage = z.infer<typeof realtimeToolCallMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof agentStatusMessageSchema>;
 export type AgentControlMessage = z.infer<typeof agentControlMessageSchema>;
+export type ChatOpenMessage = z.infer<typeof chatOpenMessageSchema>;
+export type ChatSendMessage = z.infer<typeof chatSendMessageSchema>;
+export type ChatStopMessage = z.infer<typeof chatStopMessageSchema>;
+export type ChatSelectSessionMessage = z.infer<typeof chatSelectSessionMessageSchema>;
+export type ChatNewSessionMessage = z.infer<typeof chatNewSessionMessageSchema>;
+export type ChatSetModelMessage = z.infer<typeof chatSetModelMessageSchema>;
+export type ChatSetReasoningMessage = z.infer<typeof chatSetReasoningMessageSchema>;
+export type ChatControlCommandMessage = z.infer<typeof chatControlCommandMessageSchema>;
 
 export interface RealtimeSdpMessage {
   type: "realtime.sdp";
@@ -202,7 +278,181 @@ export type RealtimeOutboundMessage =
   | RealtimeToolResultMessage
   | RealtimeTaskStatusMessage;
 
-export type PhoneOutboundMessage = CommandMessage | AgentStatusMessage | RealtimeOutboundMessage;
+export interface ChatSessionSummary {
+  key: string;
+  sessionId?: string | null;
+  label?: string | null;
+  displayName?: string | null;
+  updatedAt?: number | null;
+  model?: string | null;
+  modelProvider?: string | null;
+  contextTokens?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  estimatedCostUsd?: number | null;
+  fastMode?: boolean | null;
+  hasActiveRun?: boolean | null;
+  thinkingLevel?: string | null;
+  verboseLevel?: string | null;
+}
+
+export interface ChatHistoryMessage {
+  id?: string | null;
+  role: string;
+  text: string;
+  timestamp?: number | null;
+}
+
+export interface ChatModelOption {
+  id: string;
+  label: string;
+  provider?: string | null;
+  contextWindow?: number | null;
+  available?: boolean | null;
+}
+
+export interface ChatReasoningOption {
+  id: string;
+  label: string;
+}
+
+export interface ChatCommandOption {
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  textAliases?: string[];
+  acceptsArgs?: boolean;
+}
+
+export interface ChatToolSummary {
+  id: string;
+  label?: string | null;
+  description?: string | null;
+  source?: string | null;
+  group?: string | null;
+}
+
+export interface ChatUsageSummary {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  contextTokens?: number | null;
+  estimatedCostUsd?: number | null;
+}
+
+export interface ChatStateMessage {
+  type: "chat.state";
+  deviceId: string;
+  sessionKey: string;
+  sessionId?: string | null;
+  runId?: string | null;
+  isRunning: boolean;
+  status?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  fastMode?: boolean | null;
+  verboseLevel?: string | null;
+}
+
+export interface ChatHistoryOutboundMessage {
+  type: "chat.history";
+  deviceId: string;
+  sessionKey: string;
+  sessionId?: string | null;
+  messages: ChatHistoryMessage[];
+}
+
+export interface ChatDeltaMessage {
+  type: "chat.delta";
+  deviceId: string;
+  sessionKey: string;
+  runId: string;
+  delta: string;
+  replace?: boolean;
+}
+
+export interface ChatFinalMessage {
+  type: "chat.final";
+  deviceId: string;
+  sessionKey: string;
+  runId: string;
+  text: string;
+  usage?: unknown;
+}
+
+export interface ChatErrorMessage {
+  type: "chat.error";
+  deviceId: string;
+  sessionKey?: string;
+  runId?: string;
+  message: string;
+}
+
+export interface ChatToolEventMessage {
+  type: "chat.tool_event";
+  deviceId: string;
+  sessionKey: string;
+  runId?: string | null;
+  eventId: string;
+  toolName: string;
+  title: string;
+  status: "running" | "completed" | "failed" | "blocked" | "info";
+  summary?: string | null;
+  args?: unknown;
+  output?: unknown;
+  error?: string | null;
+  raw?: unknown;
+}
+
+export interface ChatModelsMessage {
+  type: "chat.models";
+  deviceId: string;
+  models: ChatModelOption[];
+  reasoningOptions: ChatReasoningOption[];
+}
+
+export interface ChatCommandsMessage {
+  type: "chat.commands";
+  deviceId: string;
+  commands: ChatCommandOption[];
+}
+
+export interface ChatToolsMessage {
+  type: "chat.tools";
+  deviceId: string;
+  sessionKey: string;
+  tools: ChatToolSummary[];
+}
+
+export interface ChatSessionsMessage {
+  type: "chat.sessions";
+  deviceId: string;
+  sessions: ChatSessionSummary[];
+  selectedSessionKey: string;
+}
+
+export interface ChatUsageMessage {
+  type: "chat.usage";
+  deviceId: string;
+  sessionKey: string;
+  usage: ChatUsageSummary;
+}
+
+export type ChatOutboundMessage =
+  | ChatStateMessage
+  | ChatHistoryOutboundMessage
+  | ChatDeltaMessage
+  | ChatFinalMessage
+  | ChatErrorMessage
+  | ChatToolEventMessage
+  | ChatModelsMessage
+  | ChatCommandsMessage
+  | ChatToolsMessage
+  | ChatSessionsMessage
+  | ChatUsageMessage;
+
+export type PhoneOutboundMessage = CommandMessage | AgentStatusMessage | RealtimeOutboundMessage | ChatOutboundMessage;
 
 export interface PhoneCommandRequest {
   deviceId?: string;
