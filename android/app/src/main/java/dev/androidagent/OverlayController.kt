@@ -136,6 +136,12 @@ class OverlayController(
     private var panelCloseAnimator: Animator? = null
     private var panelScrimCloseAnimator: Animator? = null
     private var suppressNextPanelViewedCallback = false
+    // Tracks whether the chat panel currently owns Android window focus.
+    // The panel can stay attached (TYPE_APPLICATION_OVERLAY) while the user has
+    // navigated away (home, app switcher, another app on top, etc.). Treat
+    // "actively viewing the chat" as panel attached AND has window focus, so we
+    // don't silently mark replies as read while the user is on the home screen.
+    private var panelHasWindowFocus = false
     private var lastChatState = ChatState()
     private var showToolCalls = true
     private var suppressSlashAutocomplete = false
@@ -196,11 +202,15 @@ class OverlayController(
     private data class SlashToken(val start: Int, val end: Int, val query: String)
 
     fun show() {
+        showInternal(allowDuringFullscreenPanel = false)
+    }
+
+    private fun showInternal(allowDuringFullscreenPanel: Boolean) {
         if (
             !Settings.canDrawOverlays(context) ||
             bubbleView != null ||
             automationSuppressionDepth > 0 ||
-            isFullscreenPanelAttached()
+            (!allowDuringFullscreenPanel && isFullscreenPanelAttached())
         ) {
             return
         }
@@ -401,15 +411,17 @@ class OverlayController(
             applyBubbleRestingState()
             state.status?.let { setStatus(it) }
             state.error?.let { setStatus(it) }
-            if (panelView != null) {
-                notifyCurrentChatSessionViewed()
-            }
+            notifyCurrentChatSessionViewed()
         }
     }
 
     fun isViewingChatSession(sessionKey: String?): Boolean {
         val key = sessionKey?.takeIf { it.isNotBlank() } ?: return false
-        return panelView != null && lastChatState.sessionKey == key
+        return isPanelActivelyViewed() && lastChatState.sessionKey == key
+    }
+
+    private fun isPanelActivelyViewed(): Boolean {
+        return panelView != null && panelHasWindowFocus
     }
 
     fun isBubbleVisible(): Boolean {
@@ -760,6 +772,11 @@ class OverlayController(
                 }
                 return super.dispatchKeyEventPreIme(event)
             }
+
+            override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+                super.onWindowFocusChanged(hasWindowFocus)
+                handlePanelWindowFocusChanged(hasWindowFocus)
+            }
         }.apply {
             isFocusableInTouchMode = true
             addView(chrome, FrameLayout.LayoutParams(
@@ -810,6 +827,10 @@ class OverlayController(
         host.requestFocus()
         panelView = host
         panelParams = params
+        // Assume we have focus when we open the panel; the real onWindowFocusChanged
+        // callback will correct this if the system never grants focus (e.g., panel
+        // opened from a background notification while user is in another app).
+        panelHasWindowFocus = true
 
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
@@ -1935,7 +1956,38 @@ class OverlayController(
     }
 
     private fun notifyCurrentChatSessionViewed() {
+        if (!isPanelActivelyViewed()) return
         lastChatState.sessionKey?.takeIf { it.isNotBlank() }?.let(onChatSessionViewed)
+    }
+
+    /**
+     * Reacts to the chat panel's Android window focus changing.
+     *
+     * The panel runs as a TYPE_APPLICATION_OVERLAY, so it can stay attached
+     * even after the user pressed home or switched apps. We use window focus
+     * as the proxy for "the user is actively engaged with the chat":
+     *
+     * - On focus gained, mark the active session as viewed (clears any unread
+     *   replies that arrived while we were backgrounded).
+     * - On focus lost while in fullscreen mode, restore the floating bubble so
+     *   the user has a surface showing the thinking animation / unread badge
+     *   on whatever screen is now visible.
+     */
+    private fun handlePanelWindowFocusChanged(hasWindowFocus: Boolean) {
+        if (panelHasWindowFocus == hasWindowFocus) return
+        panelHasWindowFocus = hasWindowFocus
+        if (hasWindowFocus) {
+            notifyCurrentChatSessionViewed()
+        } else {
+            if (activePanelPresentation == PanelPresentation.Fullscreen && bubbleView == null) {
+                // User backgrounded the fullscreen chat (home, app switcher,
+                // another app on top). Bring the bubble back so it can reflect
+                // chat state. Preserve the original dismiss-time restore intent
+                // so the regular dismiss path stays a no-op for the bubble.
+                restoreBubbleAfterFullscreen = true
+                showInternal(allowDuringFullscreenPanel = true)
+            }
+        }
     }
 
     private fun badgeText(count: Int): String {
@@ -2633,6 +2685,7 @@ class OverlayController(
         panelParams = null
         panelScrimView = null
         panelScrimParams = null
+        panelHasWindowFocus = false
         activePanelPresentation = PanelPresentation.Popup
         panelHost = null
         panelContent = null
