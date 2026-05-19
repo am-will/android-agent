@@ -98,7 +98,7 @@ class PhoneWebSocketClient(
             .put("deviceId", config.deviceId)
             .put("action", "stop")
             .put("reason", reason)
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendChatOpen(sessionKey: String? = null): Boolean {
@@ -171,7 +171,7 @@ class PhoneWebSocketClient(
             .put("deviceId", config.deviceId)
             .put("command", command)
             .put("args", args)
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendRealtimeStart(sdp: String, requestConfig: AgentConfig = config, location: AgentLocation? = null) {
@@ -184,7 +184,7 @@ class PhoneWebSocketClient(
             .put("reasoningEffort", requestConfig.reasoningEffort)
         requestConfig.openAiApiKey.takeIf { it.isNotBlank() }?.let { message.put("openAiApiKey", it) }
         location?.let { message.put("location", it.toJson()) }
-        val sent = socket?.send(message.toString()) == true
+        val sent = sendJson(message)
         Log.i(TAG, "sendRealtimeStart sent=$sent sdpLength=${sdp.length}")
         if (!sent) {
             onRealtimeError(JSONObject().put("type", "realtime.error").put("message", "Phone WebSocket is not connected for realtime voice."))
@@ -196,8 +196,11 @@ class PhoneWebSocketClient(
             .put("type", "realtime.stop")
             .put("deviceId", config.deviceId)
             .put("reason", reason)
-        val sent = socket?.send(message.toString()) == true
+        val sent = sendJson(message)
         Log.i(TAG, "sendRealtimeStop sent=$sent")
+        if (!sent) {
+            onRealtimeError(JSONObject().put("type", "realtime.error").put("message", "Phone WebSocket is not connected for realtime voice."))
+        }
     }
 
     fun sendRealtimeToolCall(call: RealtimeToolCall, requestConfig: AgentConfig = config) {
@@ -208,7 +211,7 @@ class PhoneWebSocketClient(
             .put("name", call.name)
             .put("arguments", call.arguments)
         call.itemId?.let { message.put("itemId", it) }
-        val sent = socket?.send(message.toString()) == true
+        val sent = sendJson(message)
         Log.i(TAG, "sendRealtimeToolCall sent=$sent callId=${call.callId} name=${call.name}")
         if (!sent) {
             onRealtimeError(JSONObject().put("type", "realtime.error").put("message", "Phone WebSocket is not connected for realtime tool calls."))
