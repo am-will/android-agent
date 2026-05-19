@@ -55,6 +55,50 @@ class ChatStateReducerTest {
     }
 
     @Test
+    fun historyKeepsLocalSystemCommandConfirmations() {
+        val withNotice = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.message")
+            .put("sessionKey", "agent:main:main")
+            .put("message", JSONObject()
+                .put("id", "system_run1")
+                .put("role", "system")
+                .put("text", "Reasoning Stream enabled")
+                .put("timestamp", 123L)))
+        val refreshed = ChatStateReducer.reduce(withNotice, JSONObject()
+            .put("type", "chat.history")
+            .put("sessionKey", "agent:main:main")
+            .put("messages", JSONArray()
+                .put(JSONObject().put("id", "a1").put("role", "assistant").put("text", "Done"))))
+
+        assertEquals(2, refreshed.timeline.size)
+        assertEquals("assistant", refreshed.timeline[0].role)
+        assertEquals("system", refreshed.timeline[1].role)
+        assertEquals("Reasoning Stream enabled", refreshed.timeline[1].text)
+    }
+
+    @Test
+    fun historyMergesLocalStatusMessagesChronologicallyWhenTimestampsExist() {
+        val withNotice = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.message")
+            .put("sessionKey", "agent:main:main")
+            .put("message", JSONObject()
+                .put("id", "system_run1")
+                .put("role", "system")
+                .put("text", "Fast mode disabled")
+                .put("timestamp", 200L)))
+        val refreshed = ChatStateReducer.reduce(withNotice, JSONObject()
+            .put("type", "chat.history")
+            .put("sessionKey", "agent:main:main")
+            .put("messages", JSONArray()
+                .put(JSONObject().put("id", "u1").put("role", "user").put("text", "First").put("timestamp", 100L))
+                .put(JSONObject().put("id", "a1").put("role", "assistant").put("text", "Done").put("timestamp", 150L))
+                .put(JSONObject().put("id", "u2").put("role", "user").put("text", "Second").put("timestamp", 300L))
+                .put(JSONObject().put("id", "a2").put("role", "assistant").put("text", "Done again").put("timestamp", 350L))))
+
+        assertEquals(listOf("u1", "a1", "system_run1", "u2", "a2"), refreshed.timeline.map { it.id })
+    }
+
+    @Test
     fun deltasAppendThenFinalStopsRun() {
         val withDelta = ChatStateReducer.reduce(ChatState(), JSONObject()
             .put("type", "chat.delta")

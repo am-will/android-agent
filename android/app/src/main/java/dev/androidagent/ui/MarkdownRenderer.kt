@@ -2,6 +2,8 @@ package dev.androidagent.ui
 
 import android.content.Context
 import android.graphics.Color
+import android.text.method.LinkMovementMethod
+import android.text.util.Linkify
 import android.widget.TextView
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.MarkwonTheme
@@ -31,8 +33,14 @@ object MarkdownRenderer {
         val markwon = obtain(textView.context, tokens)
         try {
             markwon.setMarkdown(textView, source)
+            Linkify.addLinks(textView, Linkify.WEB_URLS)
+            textView.movementMethod = LinkMovementMethod.getInstance()
+            textView.linksClickable = true
         } catch (t: Throwable) {
             textView.text = source
+            Linkify.addLinks(textView, Linkify.WEB_URLS)
+            textView.movementMethod = LinkMovementMethod.getInstance()
+            textView.linksClickable = true
         }
     }
 

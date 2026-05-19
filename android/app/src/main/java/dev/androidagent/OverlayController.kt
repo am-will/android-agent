@@ -501,6 +501,16 @@ class OverlayController(
         panelContent = chrome
 
         val host = object : FrameLayout(context) {
+            override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+                if (isModalCloseHotZone(event)) {
+                    if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                        dismissPanel(force = true)
+                    }
+                    return true
+                }
+                return super.dispatchTouchEvent(event)
+            }
+
             override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
                 if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
                     if (anchoredPicker?.isShowing == true) {
@@ -604,7 +614,7 @@ class OverlayController(
             drawableRes = R.drawable.ic_close,
             contentDescription = "Close chat",
             compact = true
-        ) { dismissPanel() }
+        ) { dismissPanel(force = true) }
 
         val handle = View(context).apply {
             background = Drawables.rounded(
@@ -717,6 +727,18 @@ class OverlayController(
         panelScrimView?.animate()?.cancel()
         finalizePanelDismiss()
         onStartVoice()
+    }
+
+    private fun isModalCloseHotZone(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked != android.view.MotionEvent.ACTION_DOWN &&
+            event.actionMasked != android.view.MotionEvent.ACTION_UP
+        ) {
+            return false
+        }
+        val host = panelHost ?: return false
+        val closeZoneWidth = dp(MODAL_CLOSE_HOT_ZONE_WIDTH_DP)
+        val closeZoneHeight = dp(MODAL_CLOSE_HOT_ZONE_HEIGHT_DP)
+        return event.x >= host.width - closeZoneWidth && event.y <= closeZoneHeight
     }
 
     private fun modelDisplayLabel(id: String?): String {
@@ -1144,17 +1166,6 @@ class OverlayController(
                 }
             ),
             AnchoredPicker.Row(
-                label = "Reasoning Stream: ${if (reasoningStreamOn) "On" else "Off"}",
-                sublabel = if (reasoningStreamOn) "Tap to hide reasoning stream" else "Tap to stream reasoning updates",
-                iconRes = R.drawable.ic_reasoning,
-                selected = reasoningStreamOn,
-                dismissOnSelect = false,
-                onSelect = {
-                    toggleReasoningStream()
-                    showPlusMenu(replace = true)
-                }
-            ),
-            AnchoredPicker.Row(
                 label = "Verbose: ${verboseMode.replaceFirstChar { it.uppercase() }}",
                 sublabel = "Tap for ${nextVerboseMode.replaceFirstChar { it.uppercase() }}",
                 iconRes = R.drawable.ic_command,
@@ -1176,6 +1187,17 @@ class OverlayController(
         )
 
         val voiceRows = listOf(
+            AnchoredPicker.Row(
+                label = "Reasoning Stream: ${if (reasoningStreamOn) "On" else "Off"}",
+                sublabel = if (reasoningStreamOn) "Tap to hide reasoning stream" else "Tap to stream reasoning updates",
+                iconRes = R.drawable.ic_reasoning,
+                selected = reasoningStreamOn,
+                dismissOnSelect = false,
+                onSelect = {
+                    toggleReasoningStream()
+                    showPlusMenu(replace = true)
+                }
+            ),
             AnchoredPicker.Row(
                 label = "Show Tool Calls: ${if (showToolCalls) "On" else "Off"}",
                 sublabel = if (showToolCalls) "Tap to hide bash, MCP, web search, and other tool activity" else "Tap to show tool activity",
@@ -1534,7 +1556,8 @@ class OverlayController(
 
     private fun messageBubble(item: ChatTimelineItem, tokens: ThemeTokens): View {
         val role = item.role
-        if (role == "system") {
+        val isLocalStatusNotice = role == "system" && item.id.startsWith("system_")
+        if (role == "system" && !isLocalStatusNotice) {
             return TextView(context).apply {
                 text = item.text.ifBlank { "Status" }
                 Typography.applyFootnote(this, tokens, secondary = true)
@@ -1683,7 +1706,7 @@ class OverlayController(
         }
     }
 
-    private fun dismissPanel(cancelTranscription: Boolean = true) {
+    private fun dismissPanel(cancelTranscription: Boolean = true, force: Boolean = false) {
         if (cancelTranscription && lastTranscriptionState.isRecording) {
             onCancelTranscription()
         }
@@ -1693,6 +1716,12 @@ class OverlayController(
         val panel = panelView
         val scrim = panelScrimView
         if (panel == null) {
+            finalizePanelDismiss()
+            return
+        }
+        if (force) {
+            panel.animate().cancel()
+            scrim?.animate()?.cancel()
             finalizePanelDismiss()
             return
         }
@@ -1719,6 +1748,7 @@ class OverlayController(
     }
 
     private fun finalizePanelDismiss() {
+        panelDismissAnimating = false
         detachOverlayView(panelView)
         detachOverlayView(panelScrimView)
         panelView = null
@@ -2283,6 +2313,8 @@ class OverlayController(
         private const val VOICE_PULSE_MS = 720L
         private const val VOICE_MODAL_MAX_SCREEN_FRACTION = 0.40f
         private const val CHAT_MODAL_HEIGHT_FRACTION = 0.82f
+        private const val MODAL_CLOSE_HOT_ZONE_WIDTH_DP = 56
+        private const val MODAL_CLOSE_HOT_ZONE_HEIGHT_DP = 88
         private const val KEYBOARD_HEIGHT_ESTIMATE_FRACTION = 0.485f
         private const val KEYBOARD_COMPOSER_GAP_DP = 4
     }

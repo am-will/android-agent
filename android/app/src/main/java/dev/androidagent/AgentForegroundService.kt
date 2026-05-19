@@ -19,6 +19,8 @@ import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatStateReducer
+import dev.androidagent.chat.ChatTimelineItem
+import dev.androidagent.chat.ChatTimelineKind
 import dev.androidagent.chat.ChatUsageSummary
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
@@ -30,6 +32,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.util.UUID
 
 class AgentForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -185,6 +188,7 @@ class AgentForegroundService : Service() {
 
     private fun startNewChatFromUi() {
         pendingNewChat = true
+        val now = System.currentTimeMillis()
         chatState = chatState.copy(
             sessionKey = null,
             sessionId = null,
@@ -192,7 +196,13 @@ class AgentForegroundService : Service() {
             isRunning = false,
             status = "Started a new chat",
             error = null,
-            timeline = emptyList(),
+            timeline = listOf(ChatTimelineItem(
+                id = "system_${UUID.randomUUID()}",
+                kind = ChatTimelineKind.MESSAGE,
+                role = "system",
+                text = "Started a new chat",
+                timestamp = now
+            )),
             usage = ChatUsageSummary()
         )
         overlayController?.setChatState(chatState)

@@ -24,6 +24,7 @@ class FakeGatewayClient {
   readonly handlers = new Set<GatewayEventHandler>();
   readonly sent: Array<{ sessionKey: string; message: string; idempotencyKey?: string }> = [];
   readonly created: Array<{ key?: string; label?: string; model?: string }> = [];
+  readonly patched: Array<{ sessionKey: string; patch: Record<string, unknown> }> = [];
   readonly aborted: Array<{ sessionKey: string; runId?: string }> = [];
   private runCount = 0;
 
@@ -60,7 +61,8 @@ class FakeGatewayClient {
     return { key: `agent:main:explicit:${options.key ?? "created"}`, sessionId: `session_${this.created.length}` };
   }
 
-  async patchSession(): Promise<unknown> {
+  async patchSession(sessionKey: string, patch: Record<string, unknown>): Promise<unknown> {
+    this.patched.push({ sessionKey, patch });
     return { ok: true };
   }
 
@@ -156,6 +158,29 @@ test("realtime requests start a fresh chat only outside the reuse window", async
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("new chats use uuid labels until first message display name is set", async () => {
+  const { bridge, client } = createHarness();
+
+  await bridge.newSession({
+    type: "chat.new_session",
+    deviceId: "pixel"
+  });
+
+  assert.equal(client.created.length, 1);
+  assert.match(client.created[0]?.label ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.notEqual(client.created[0]?.label, "Open Claw Agent");
+
+  await bridge.send({
+    type: "chat.send",
+    deviceId: "pixel",
+    text: "Summarize my project and next steps"
+  });
+
+  assert.deepEqual(client.patched.map((entry) => entry.patch), [
+    { displayName: "Summarize my project and next steps" }
+  ]);
 });
 
 test("realtime steer and stop are visible user messages on the active chat", async () => {

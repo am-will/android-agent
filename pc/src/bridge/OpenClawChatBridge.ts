@@ -42,6 +42,7 @@ interface DeviceChatState {
   reasoningStream?: boolean | null;
   fastMode?: boolean | null;
   verboseLevel?: string | null;
+  pendingFirstMessageDisplayName?: boolean;
   lastRealtimeRequestAt?: number | null;
 }
 
@@ -122,7 +123,11 @@ export class OpenClawChatBridge {
     }
 
     const idempotencyKey = message.idempotencyKey ?? randomUUID();
+    if (await this.handleVisibleSlashCommand(message.deviceId, text, state.sessionKey)) {
+      return;
+    }
     if (isExplicitPhoneTask(text)) {
+      await this.maybeSetFirstMessageDisplayName(message.deviceId, text);
       await this.fallbackSend(message, idempotencyKey, "phone");
       return;
     }
@@ -137,6 +142,7 @@ export class OpenClawChatBridge {
       });
       state.sessionKey = result.sessionKey;
       state.runId = result.runId;
+      await this.maybeSetFirstMessageDisplayName(message.deviceId, text);
       this.audit?.record("openclaw_chat_send", message.deviceId, {
         sessionKey: result.sessionKey,
         runId: result.runId,
@@ -259,6 +265,7 @@ export class OpenClawChatBridge {
     const state = this.stateFor(message.deviceId);
     state.sessionKey = message.sessionKey;
     state.runId = null;
+    state.pendingFirstMessageDisplayName = false;
     state.lastRealtimeRequestAt = null;
     this.sendState(message.deviceId, "Switched session");
     await this.refreshDevice(message.deviceId);
@@ -266,10 +273,16 @@ export class OpenClawChatBridge {
 
   async newSession(message: ChatNewSessionMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
-    const requestKey = `phone-${message.deviceId}-${randomUUID()}`;
+    const sessionUuid = randomUUID();
+    const requestKey = typeof message.key === "string" && message.key.trim()
+      ? message.key.trim()
+      : `phone-${message.deviceId}-${sessionUuid}`;
+    const explicitLabel = typeof message.label === "string" && message.label.trim()
+      ? message.label.trim()
+      : undefined;
     const created = await this.client.createSession({
       key: requestKey,
-      label: message.label ?? "Open Claw Agent",
+      label: explicitLabel ?? sessionUuid,
       model: message.model ?? state.model ?? undefined
     });
     const record = created && typeof created === "object" ? created as Record<string, unknown> : {};
@@ -277,6 +290,7 @@ export class OpenClawChatBridge {
     state.sessionKey = key ?? `agent:${this.config.openClawChatAgentId}:explicit:${requestKey}`;
     state.sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
     state.runId = null;
+    state.pendingFirstMessageDisplayName = explicitLabel ? false : true;
     state.lastRealtimeRequestAt = null;
     this.sendState(message.deviceId, "Started a new chat");
     await this.refreshDevice(message.deviceId);
@@ -286,14 +300,20 @@ export class OpenClawChatBridge {
     const state = this.stateFor(message.deviceId);
     const sessionKey = message.sessionKey ?? state.sessionKey;
     state.model = message.model;
-    await this.sendSlashCommand(message.deviceId, `/model ${message.model}`, sessionKey, `Model: ${message.model}`);
+    await this.sendSlashCommand(message.deviceId, `/model ${message.model}`, sessionKey, `Model: ${message.model}`, `Model set to ${message.model}`);
   }
 
   async setReasoning(message: ChatSetReasoningMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
     const sessionKey = message.sessionKey ?? state.sessionKey;
     state.reasoningEffort = message.reasoningEffort;
-    await this.sendSlashCommand(message.deviceId, `/think ${message.reasoningEffort}`, sessionKey, `Reasoning: ${message.reasoningEffort}`);
+    await this.sendSlashCommand(
+      message.deviceId,
+      `/think ${message.reasoningEffort}`,
+      sessionKey,
+      `Reasoning: ${message.reasoningEffort}`,
+      `Reasoning set to ${message.reasoningEffort}`
+    );
   }
 
   async controlCommand(message: ChatControlCommandMessage): Promise<void> {
@@ -329,7 +349,13 @@ export class OpenClawChatBridge {
           : firstArg === "on"
             ? true
             : undefined;
-      await this.sendSlashCommand(message.deviceId, `/fast ${enabled === false ? "off" : "on"}`, state.sessionKey, "Updating fast mode");
+      await this.sendSlashCommand(
+        message.deviceId,
+        `/fast ${enabled === false ? "off" : "on"}`,
+        state.sessionKey,
+        "Updating fast mode",
+        `Fast mode ${enabled === false ? "disabled" : "enabled"}`
+      );
       return;
     }
 
@@ -339,7 +365,7 @@ export class OpenClawChatBridge {
         : firstArg && ["on", "off", "full"].includes(firstArg)
           ? firstArg
           : "on";
-      await this.sendSlashCommand(message.deviceId, `/verbose ${level}`, state.sessionKey, "Updating verbosity");
+      await this.sendSlashCommand(message.deviceId, `/verbose ${level}`, state.sessionKey, "Updating verbosity", `Verbose mode set to ${level}`);
       return;
     }
 
@@ -354,7 +380,8 @@ export class OpenClawChatBridge {
         message.deviceId,
         `/reasoning ${level}`,
         state.sessionKey,
-        `Reasoning Stream: ${state.reasoningStream ? "On" : "Off"}`
+        `Reasoning Stream: ${state.reasoningStream ? "On" : "Off"}`,
+        `Reasoning Stream ${state.reasoningStream ? "enabled" : "disabled"}`
       );
       return;
     }
@@ -366,6 +393,38 @@ export class OpenClawChatBridge {
       text: slashText,
       sessionKey: state.sessionKey
     });
+  }
+
+  private async handleVisibleSlashCommand(deviceId: string, text: string, sessionKey: string): Promise<boolean> {
+    const normalized = text.trim();
+    if (!normalized.startsWith("/")) {
+      return false;
+    }
+    const [rawName, ...parts] = normalized.slice(1).trim().split(/\s+/);
+    const name = rawName?.toLowerCase();
+    const firstArg = parts[0]?.toLowerCase();
+    if (name !== "reasoning" && name !== "reason") {
+      return false;
+    }
+
+    const currentEnabled = this.stateFor(deviceId).reasoningStream === true;
+    const level = firstArg === "stream" || firstArg === "on"
+      ? "stream"
+      : firstArg === "off"
+        ? "off"
+        : currentEnabled
+          ? "stream"
+          : "off";
+    const nextEnabled = level === "stream";
+    this.stateFor(deviceId).reasoningStream = nextEnabled;
+    await this.sendSlashCommand(
+      deviceId,
+      firstArg ? `/reasoning ${level}` : "/reasoning",
+      sessionKey,
+      `Reasoning Stream: ${nextEnabled ? "On" : "Off"}`,
+      `Reasoning Stream ${nextEnabled ? "enabled" : "disabled"}`
+    );
+    return true;
   }
 
   close(): void {
@@ -390,6 +449,7 @@ export class OpenClawChatBridge {
       reasoningStream: null,
       fastMode: null,
       verboseLevel: null,
+      pendingFirstMessageDisplayName: false,
       lastRealtimeRequestAt: null
     };
     this.devices.set(deviceId, created);
@@ -414,6 +474,7 @@ export class OpenClawChatBridge {
     state.sessionKey = key ?? `agent:${this.config.openClawChatAgentId}:explicit:${requestKey}`;
     state.sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
     state.runId = null;
+    state.pendingFirstMessageDisplayName = false;
     this.sendState(deviceId, "Started a new realtime chat");
     await this.refreshDevice(deviceId);
   }
@@ -446,6 +507,7 @@ export class OpenClawChatBridge {
       if (typeof record.key === "string" && record.key.trim()) {
         state.sessionKey = record.key;
       }
+      state.pendingFirstMessageDisplayName = false;
     }
   }
 
@@ -538,7 +600,25 @@ export class OpenClawChatBridge {
     }
   }
 
-  private async sendSlashCommand(deviceId: string, text: string, sessionKey: string, status: string): Promise<void> {
+  private async maybeSetFirstMessageDisplayName(deviceId: string, text: string): Promise<void> {
+    const state = this.stateFor(deviceId);
+    if (!state.pendingFirstMessageDisplayName) {
+      return;
+    }
+    const displayName = firstMessageDisplayName(text);
+    if (!displayName) {
+      return;
+    }
+    state.pendingFirstMessageDisplayName = false;
+    try {
+      await this.client.patchSession(state.sessionKey, { displayName });
+      void this.refreshMetadata(deviceId);
+    } catch (error) {
+      console.warn(`[chat] ${deviceId}: failed to set session display name: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async sendSlashCommand(deviceId: string, text: string, sessionKey: string, status: string, successMessage?: string): Promise<void> {
     try {
       const result = await this.client.sendChat({
         sessionKey,
@@ -549,6 +629,9 @@ export class OpenClawChatBridge {
       state.sessionKey = result.sessionKey;
       state.runId = result.runId;
       this.sendState(deviceId, status);
+      if (successMessage) {
+        this.appendSystemMessage(deviceId, successMessage, `system_${result.runId}`);
+      }
     } catch (error) {
       this.sendChatError(deviceId, sessionKey, error);
     }
@@ -680,6 +763,23 @@ export class OpenClawChatBridge {
     });
   }
 
+  private appendSystemMessage(deviceId: string, text: string, id: string): void {
+    const state = this.stateFor(deviceId);
+    const message: ChatHistoryMessage = {
+      id,
+      role: "system",
+      text,
+      timestamp: Date.now()
+    };
+    this.sendChat(deviceId, {
+      type: "chat.message",
+      deviceId,
+      sessionKey: state.sessionKey,
+      sessionId: state.sessionId,
+      message
+    });
+  }
+
   private waitForRun(deviceId: string, sessionKey: string, runId: string): Promise<AgentRunResult> {
     return new Promise<AgentRunResult>((resolve, reject) => {
       const key = this.runWaiterKey(deviceId, runId);
@@ -796,6 +896,14 @@ function isExplicitPhoneTask(text: string): boolean {
   const normalized = text.toLowerCase();
   return /\b(android|phone|device|screen|app|tap|swipe|scroll|keyboard|notification|settings app|facebook app|instagram app|messages app|sms)\b/.test(normalized)
     && !/\b(mac|desktop|pc|laptop|browser|terminal|repo|codebase)\b/.test(normalized);
+}
+
+function firstMessageDisplayName(text: string): string | undefined {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.length <= 64 ? normalized : `${normalized.slice(0, 61).trimEnd()}...`;
 }
 
 function reasoningStreamEnabled(level: string | null | undefined): boolean | null {

@@ -186,10 +186,19 @@ object ChatStateReducer {
     }
 
     private fun reduceHistory(state: ChatState, message: JSONObject): ChatState {
+        val localStatusMessages = state.timeline.filter { item ->
+            item.kind == ChatTimelineKind.MESSAGE && item.id.startsWith("system_")
+        }
+        val history = parseHistory(message.optJSONArray("messages"))
+        val historyIds = history.map { it.id }.toSet()
         return state.copy(
             sessionKey = message.optNullableString("sessionKey") ?: state.sessionKey,
             sessionId = message.optNullableString("sessionId") ?: state.sessionId,
-            timeline = parseHistory(message.optJSONArray("messages")),
+            timeline = mergeHistoryWithLocalStatus(
+                current = state.timeline,
+                history = history,
+                localStatus = localStatusMessages.filterNot { it.id in historyIds }
+            ),
             error = null
         )
     }
@@ -375,6 +384,36 @@ object ChatStateReducer {
         return timeline.toMutableList().also { it[index] = item }
     }
 
+    private fun mergeHistoryWithLocalStatus(
+        current: List<ChatTimelineItem>,
+        history: List<ChatTimelineItem>,
+        localStatus: List<ChatTimelineItem>
+    ): List<ChatTimelineItem> {
+        if (localStatus.isEmpty()) return history
+        val merged = history + localStatus
+        if (merged.any { it.timestamp == null }) return merged
+        val existingIndexById = current.mapIndexedNotNull { index, item ->
+            item.id.takeIf { it.isNotBlank() }?.let { it to index }
+        }.toMap()
+        return merged
+            .mapIndexed { fallbackIndex, item ->
+                val timestamp = item.timestamp
+                val existingIndex = existingIndexById[item.id]
+                TimelineOrderingItem(
+                    item = item,
+                    timestamp = timestamp,
+                    existingIndex = existingIndex,
+                    fallbackIndex = fallbackIndex
+                )
+            }
+            .sortedWith(
+                compareBy<TimelineOrderingItem> { it.timestamp ?: Long.MAX_VALUE }
+                    .thenBy { it.existingIndex ?: Int.MAX_VALUE }
+                    .thenBy { it.fallbackIndex }
+            )
+            .map { it.item }
+    }
+
     private fun markReasoningClearing(timeline: List<ChatTimelineItem>, runId: String?): List<ChatTimelineItem> {
         return timeline.map { item ->
             if (item.kind == ChatTimelineKind.REASONING && !item.isClearing && (runId == null || item.runId == runId)) {
@@ -549,4 +588,11 @@ object ChatStateReducer {
     private fun reasoningStreamEnabled(level: String): Boolean {
         return level == "stream"
     }
+
+    private data class TimelineOrderingItem(
+        val item: ChatTimelineItem,
+        val timestamp: Long?,
+        val existingIndex: Int?,
+        val fallbackIndex: Int
+    )
 }
