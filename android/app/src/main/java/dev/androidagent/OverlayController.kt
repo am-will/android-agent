@@ -135,6 +135,7 @@ class OverlayController(
     private var lastTranscriptionState = VoiceTranscriptionState()
     private var automationSuppressionDepth = 0
     private var restoreBubbleAfterAutomation = false
+    private var restoreBubbleAfterFullscreen = false
     private var restorePanelAfterAutomation = false
     private var restorePanelScrimAfterAutomation = false
     private var restorePanelFocusAfterAutomation = false
@@ -159,7 +160,12 @@ class OverlayController(
     private data class SlashToken(val start: Int, val end: Int, val query: String)
 
     fun show() {
-        if (!Settings.canDrawOverlays(context) || bubbleView != null || automationSuppressionDepth > 0) {
+        if (
+            !Settings.canDrawOverlays(context) ||
+            bubbleView != null ||
+            automationSuppressionDepth > 0 ||
+            isFullscreenPanelAttached()
+        ) {
             return
         }
         val tokens = tokens()
@@ -240,6 +246,7 @@ class OverlayController(
     fun hide() {
         automationSuppressionDepth = 0
         restoreBubbleAfterAutomation = false
+        restoreBubbleAfterFullscreen = false
         rememberBubblePosition()
         stopBubblePulse()
         bubbleView?.let { windowManager.removeView(it) }
@@ -348,7 +355,7 @@ class OverlayController(
     ) {
         mainHandler.post {
             if (panelView == null) {
-                if (bubbleView == null) {
+                if (bubbleView == null && presentation == PanelPresentation.Popup) {
                     show()
                 }
                 suppressNextPanelViewedCallback = !markCurrentSessionViewed
@@ -521,6 +528,9 @@ class OverlayController(
         }
 
         activePanelPresentation = presentation
+        if (presentation == PanelPresentation.Fullscreen) {
+            suppressBubbleForFullscreen()
+        }
         val tokens = tokens()
         val input = buildComposerInput(tokens)
         val history = LinearLayout(context).apply {
@@ -2086,6 +2096,7 @@ class OverlayController(
     }
 
     private fun finalizePanelDismiss() {
+        val dismissedPresentation = activePanelPresentation
         panelDismissAnimating = false
         detachOverlayView(panelView)
         detachOverlayView(panelScrimView)
@@ -2117,6 +2128,9 @@ class OverlayController(
         headerSessionAnchor = null
         headerSessionChevron = null
         plusButton = null
+        if (dismissedPresentation == PanelPresentation.Fullscreen) {
+            restoreBubbleAfterFullscreenDismiss()
+        }
     }
 
     private fun buildVoiceSurface(tokens: ThemeTokens): LinearLayout {
@@ -2602,6 +2616,34 @@ class OverlayController(
             lastBubbleX = it.x
             lastBubbleY = it.y
         }
+    }
+
+    private fun suppressBubbleForFullscreen() {
+        val bubble = bubbleView
+        restoreBubbleAfterFullscreen = isOverlayAttached(bubble)
+        rememberBubblePosition()
+        stopBubblePulse()
+        bubble?.let {
+            it.animate().cancel()
+            it.animate().setListener(null)
+            detachOverlayView(it)
+        }
+        bubbleView = null
+        bubbleUnreadBadgeView = null
+        bubbleParams = null
+        removeTrashTarget()
+    }
+
+    private fun restoreBubbleAfterFullscreenDismiss() {
+        val shouldRestore = restoreBubbleAfterFullscreen
+        restoreBubbleAfterFullscreen = false
+        if (shouldRestore && Settings.canDrawOverlays(context) && automationSuppressionDepth == 0 && bubbleView == null) {
+            show()
+        }
+    }
+
+    private fun isFullscreenPanelAttached(): Boolean {
+        return activePanelPresentation == PanelPresentation.Fullscreen && isOverlayAttached(panelView)
     }
 
     private fun restoreSuppressedPanel(

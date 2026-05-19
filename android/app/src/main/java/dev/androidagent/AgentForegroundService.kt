@@ -274,7 +274,9 @@ class AgentForegroundService : Service() {
 
     private fun openChatFromIntent(intent: Intent?) {
         val presentation = panelPresentationFrom(intent)
-        overlayController?.show()
+        if (presentation == OverlayController.PanelPresentation.Popup) {
+            overlayController?.show()
+        }
         overlayController?.openPanel(presentation)
     }
 
@@ -286,7 +288,9 @@ class AgentForegroundService : Service() {
         markChatSessionRead(sessionKey)
         cancelReplyNotification(sessionKey)
         if (Settings.canDrawOverlays(this)) {
-            overlayController?.show()
+            if (presentation == OverlayController.PanelPresentation.Popup) {
+                overlayController?.show()
+            }
             overlayController?.openChatPanel(
                 markCurrentSessionViewed = false,
                 presentation = presentation
