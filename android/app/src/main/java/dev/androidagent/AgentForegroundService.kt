@@ -272,13 +272,25 @@ class AgentForegroundService : Service() {
         updateNotification()
     }
 
-    private fun openChatSessionFromNotification(sessionKey: String) {
+    private fun openChatFromIntent(intent: Intent?) {
+        val presentation = panelPresentationFrom(intent)
+        overlayController?.show()
+        overlayController?.openPanel(presentation)
+    }
+
+    private fun openChatSessionFromNotification(
+        sessionKey: String,
+        presentation: OverlayController.PanelPresentation
+    ) {
         webSocketClient?.sendChatSelectSession(sessionKey)
         markChatSessionRead(sessionKey)
         cancelReplyNotification(sessionKey)
         if (Settings.canDrawOverlays(this)) {
             overlayController?.show()
-            overlayController?.openChatPanel(markCurrentSessionViewed = false)
+            overlayController?.openChatPanel(
+                markCurrentSessionViewed = false,
+                presentation = presentation
+            )
         } else {
             startActivity(
                 Intent(this, MainActivity::class.java)
@@ -288,10 +300,19 @@ class AgentForegroundService : Service() {
     }
 
     private fun panelPresentationFrom(intent: Intent?): OverlayController.PanelPresentation {
-        return if (intent?.getStringExtra(EXTRA_PANEL_PRESENTATION) == PANEL_PRESENTATION_FULLSCREEN) {
-            OverlayController.PanelPresentation.Fullscreen
-        } else {
+        return when (intent?.getStringExtra(EXTRA_PANEL_PRESENTATION)) {
+            PANEL_PRESENTATION_FULLSCREEN -> OverlayController.PanelPresentation.Fullscreen
+            PANEL_PRESENTATION_POPUP -> OverlayController.PanelPresentation.Popup
+            PANEL_PRESENTATION_AUTO -> notificationPanelPresentation()
+            else -> OverlayController.PanelPresentation.Popup
+        }
+    }
+
+    private fun notificationPanelPresentation(): OverlayController.PanelPresentation {
+        return if (overlayController?.isBubbleVisible() == true) {
             OverlayController.PanelPresentation.Popup
+        } else {
+            OverlayController.PanelPresentation.Fullscreen
         }
     }
 
@@ -460,7 +481,9 @@ class AgentForegroundService : Service() {
         val openPendingIntent = PendingIntent.getService(
             this,
             REQUEST_OPEN_CHAT,
-            Intent(this, AgentForegroundService::class.java).setAction(ACTION_OPEN_CHAT),
+            Intent(this, AgentForegroundService::class.java)
+                .setAction(ACTION_OPEN_CHAT)
+                .putExtra(EXTRA_PANEL_PRESENTATION, PANEL_PRESENTATION_AUTO),
             flags
         )
         val unreadCount = chatState.totalUnreadReplies
@@ -492,6 +515,7 @@ class AgentForegroundService : Service() {
         val openIntent = Intent(this, AgentForegroundService::class.java)
             .setAction(ACTION_OPEN_CHAT_SESSION)
             .putExtra(EXTRA_SESSION_KEY, sessionKey)
+            .putExtra(EXTRA_PANEL_PRESENTATION, PANEL_PRESENTATION_AUTO)
         val contentIntent = PendingIntent.getService(this, replyNotificationId(sessionKey), openIntent, flags)
         val label = unread.displayNameFor(sessionKey)
         val count = unread.count
@@ -529,7 +553,9 @@ class AgentForegroundService : Service() {
         const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
         private const val ACTION_OPEN_CHAT_SESSION = "dev.openclawagent.action.OPEN_CHAT_SESSION"
         const val EXTRA_PANEL_PRESENTATION = "panelPresentation"
+        const val PANEL_PRESENTATION_POPUP = "popup"
         const val PANEL_PRESENTATION_FULLSCREEN = "fullscreen"
+        private const val PANEL_PRESENTATION_AUTO = "auto"
         private const val EXTRA_SESSION_KEY = "sessionKey"
         private const val NOTIFICATION_ID = 1
         private const val REPLY_NOTIFICATION_ID_BASE = 10_000
