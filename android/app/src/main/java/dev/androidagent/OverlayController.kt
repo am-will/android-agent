@@ -141,6 +141,7 @@ class OverlayController(
     private var restoreComposerFocusAfterAutomation = false
     private var keyboardFallbackSuppressed = false
     private var stableKeyboardFrameObserved = false
+    private var activePanelPresentation = PanelPresentation.Popup
 
     private var panelHost: FrameLayout? = null
     private var panelContent: LinearLayout? = null
@@ -149,6 +150,12 @@ class OverlayController(
     private var headerSessionChevron: ImageView? = null
     private var plusButton: ImageButton? = null
 
+    enum class PanelPresentation {
+        Popup,
+        Fullscreen
+    }
+
+    private data class PanelBounds(val height: Int, val y: Int)
     private data class SlashToken(val start: Int, val end: Int, val query: String)
 
     fun show() {
@@ -177,7 +184,7 @@ class OverlayController(
             elevation = dp(DesignTokens.Elevation.mid).toFloat()
             isClickable = true
             isFocusable = true
-            setOnClickListener { togglePanel() }
+            setOnClickListener { togglePanel(PanelPresentation.Popup) }
             addView(ImageView(context).apply {
                 setImageResource(R.drawable.openclaw_bubble_logo)
                 scaleType = ImageView.ScaleType.FIT_CENTER
@@ -222,7 +229,7 @@ class OverlayController(
                 }
             },
             onDragCancel = { hideTrashTarget() }
-        ) { togglePanel() }
+        ) { togglePanel(PanelPresentation.Popup) }
         windowManager.addView(bubble, params)
         bubbleView = bubble
         bubbleParams = params
@@ -331,15 +338,24 @@ class OverlayController(
         return panelView != null && lastChatState.sessionKey == key
     }
 
-    fun openChatPanel(markCurrentSessionViewed: Boolean = true) {
+    fun openChatPanel(
+        markCurrentSessionViewed: Boolean = true,
+        presentation: PanelPresentation = PanelPresentation.Popup
+    ) {
         mainHandler.post {
             if (panelView == null) {
                 if (bubbleView == null) {
                     show()
                 }
                 suppressNextPanelViewedCallback = !markCurrentSessionViewed
-                togglePanel()
+                togglePanel(presentation)
             } else {
+                if (activePanelPresentation != presentation) {
+                    suppressNextPanelViewedCallback = !markCurrentSessionViewed
+                    dismissPanel(force = true)
+                    togglePanel(presentation)
+                    return@post
+                }
                 if (markCurrentSessionViewed) {
                     notifyCurrentChatSessionViewed()
                 }
@@ -481,22 +497,26 @@ class OverlayController(
         return deferred
     }
 
-    fun openPanel() {
+    fun openPanel(presentation: PanelPresentation = PanelPresentation.Popup) {
         mainHandler.post {
             if (panelView != null) {
-                notifyCurrentChatSessionViewed()
-                return@post
+                if (activePanelPresentation == presentation) {
+                    notifyCurrentChatSessionViewed()
+                    return@post
+                }
+                dismissPanel(force = true)
             }
-            togglePanel()
+            togglePanel(presentation)
         }
     }
 
-    private fun togglePanel() {
+    private fun togglePanel(presentation: PanelPresentation = PanelPresentation.Popup) {
         if (panelView != null) {
             dismissPanel()
             return
         }
 
+        activePanelPresentation = presentation
         val tokens = tokens()
         val input = buildComposerInput(tokens)
         val history = LinearLayout(context).apply {
@@ -522,7 +542,7 @@ class OverlayController(
             visibility = View.GONE
             keyboardSpacerView = this
         }
-        val header = buildModalHeader(tokens)
+        val header = buildModalHeader(tokens, presentation)
 
         val chrome = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -611,15 +631,15 @@ class OverlayController(
         panelHost = host
 
         val display = context.resources.displayMetrics
-        val modalHeight = chatModalHeight(display.heightPixels)
+        val defaultBounds = panelDefaultBounds(display.heightPixels, presentation)
         val params = overlayParams(
             width = display.widthPixels,
-            height = modalHeight,
+            height = defaultBounds.height,
             focusable = true
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 0
-            y = display.heightPixels - modalHeight
+            y = defaultBounds.y
         }
         input.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
@@ -654,7 +674,7 @@ class OverlayController(
 
         // Slide in from the bottom.
         host.post {
-            val startOffset = (host.height.takeIf { it > 0 } ?: modalHeight).toFloat()
+            val startOffset = (host.height.takeIf { it > 0 } ?: defaultBounds.height).toFloat()
             host.translationY = startOffset
             host.animate()
                 .translationY(0f)
@@ -675,7 +695,7 @@ class OverlayController(
         }
     }
 
-    private fun buildModalHeader(tokens: ThemeTokens): View {
+    private fun buildModalHeader(tokens: ThemeTokens, presentation: PanelPresentation): View {
         val voiceButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_voice_wave,
@@ -700,18 +720,22 @@ class OverlayController(
             compact = true
         ) { dismissPanel(force = true) }
 
-        val handle = View(context).apply {
-            background = Drawables.rounded(
-                fill = DesignTokens.withAlpha(tokens.tertiaryText, 0x80),
-                radius = dp(DesignTokens.Radius.pill).toFloat()
-            )
-        }
-        val handleArea = FrameLayout(context).apply {
-            addView(handle, FrameLayout.LayoutParams(
-                dp(34),
-                dp(4)
-            ).apply { gravity = Gravity.CENTER })
-            attachSwipeToDismiss(this)
+        val handleArea = if (presentation == PanelPresentation.Popup) {
+            val handle = View(context).apply {
+                background = Drawables.rounded(
+                    fill = DesignTokens.withAlpha(tokens.tertiaryText, 0x80),
+                    radius = dp(DesignTokens.Radius.pill).toFloat()
+                )
+            }
+            FrameLayout(context).apply {
+                addView(handle, FrameLayout.LayoutParams(
+                    dp(34),
+                    dp(4)
+                ).apply { gravity = Gravity.CENTER })
+                attachSwipeToDismiss(this)
+            }
+        } else {
+            null
         }
 
         val brandedTitle = SpannableString("OpenClaw").apply {
@@ -767,10 +791,12 @@ class OverlayController(
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.xs))
-            addView(handleArea, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(20)
-            ).apply { gravity = Gravity.CENTER_HORIZONTAL })
+            handleArea?.let {
+                addView(it, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(20)
+                ).apply { gravity = Gravity.CENTER_HORIZONTAL })
+            }
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -2063,6 +2089,7 @@ class OverlayController(
         panelParams = null
         panelScrimView = null
         panelScrimParams = null
+        activePanelPresentation = PanelPresentation.Popup
         panelHost = null
         panelContent = null
         composerInput = null
@@ -2153,7 +2180,7 @@ class OverlayController(
 
     private fun showVoiceSurface() {
         if (panelView == null) {
-            togglePanel()
+            togglePanel(PanelPresentation.Popup)
         }
         voiceSurface?.visibility = View.VISIBLE
     }
@@ -2763,8 +2790,8 @@ class OverlayController(
         } else {
             0
         }
-        val defaultHeight = chatModalHeight(displayHeight)
-        val defaultY = displayHeight - defaultHeight
+        val defaultBounds = panelDefaultBounds(displayHeight)
+        val defaultY = defaultBounds.y
         if (keyboardHeight < dp(120)) {
             restorePanelDefaultSize(panel, params)
             return
@@ -2807,14 +2834,13 @@ class OverlayController(
 
     private fun restorePanelDefaultSize(panel: View, params: WindowManager.LayoutParams) {
         val displayHeight = context.resources.displayMetrics.heightPixels
-        val defaultHeight = chatModalHeight(displayHeight)
-        val defaultY = displayHeight - defaultHeight
+        val defaultBounds = panelDefaultBounds(displayHeight)
         panel.animate().cancel()
         panel.translationY = 0f
         setKeyboardSpacerHeight(0)
-        if (params.height != defaultHeight || params.y != defaultY) {
-            params.height = defaultHeight
-            params.y = defaultY
+        if (params.height != defaultBounds.height || params.y != defaultBounds.y) {
+            params.height = defaultBounds.height
+            params.y = defaultBounds.y
             windowManager.updateViewLayout(panel, params)
         }
     }
@@ -2836,7 +2862,20 @@ class OverlayController(
         }
     }
 
-    private fun chatModalHeight(displayHeight: Int): Int {
+    private fun panelDefaultBounds(
+        displayHeight: Int,
+        presentation: PanelPresentation = activePanelPresentation
+    ): PanelBounds {
+        return when (presentation) {
+            PanelPresentation.Popup -> {
+                val height = popupPanelHeight(displayHeight)
+                PanelBounds(height = height, y = displayHeight - height)
+            }
+            PanelPresentation.Fullscreen -> PanelBounds(height = displayHeight, y = 0)
+        }
+    }
+
+    private fun popupPanelHeight(displayHeight: Int): Int {
         return (displayHeight * CHAT_MODAL_HEIGHT_FRACTION).toInt()
     }
 
