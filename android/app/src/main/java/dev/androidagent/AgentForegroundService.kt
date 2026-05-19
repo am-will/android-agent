@@ -522,6 +522,8 @@ class AgentForegroundService : Service() {
         private const val ACTION_STOP_TURN = "dev.openclawagent.action.STOP_TURN"
         const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
         private const val ACTION_OPEN_CHAT_SESSION = "dev.openclawagent.action.OPEN_CHAT_SESSION"
+        const val EXTRA_PANEL_PRESENTATION = "panelPresentation"
+        const val PANEL_PRESENTATION_FULLSCREEN = "fullscreen"
         private const val EXTRA_SESSION_KEY = "sessionKey"
         private const val NOTIFICATION_ID = 1
         private const val REPLY_NOTIFICATION_ID_BASE = 10_000
