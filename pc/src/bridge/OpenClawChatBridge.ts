@@ -192,7 +192,7 @@ export class OpenClawChatBridge {
       throw new Error("Realtime request text is required");
     }
 
-    await this.ensureFreshRealtimeSession(request.deviceId);
+    await this.ensureFreshRealtimeSession(request.deviceId, text);
     const state = this.stateFor(request.deviceId);
     const idempotencyKey = options.callId ? `realtime_${options.callId}` : `realtime_${randomUUID()}`;
     this.appendUserMessage(request.deviceId, text, `user_${idempotencyKey}`);
@@ -456,19 +456,16 @@ export class OpenClawChatBridge {
     return created;
   }
 
-  private async ensureFreshRealtimeSession(deviceId: string): Promise<void> {
+  private async ensureFreshRealtimeSession(deviceId: string, firstRequestText: string): Promise<void> {
     const state = this.stateFor(deviceId);
     const lastRealtimeRequestAt = state.lastRealtimeRequestAt ?? 0;
     if (lastRealtimeRequestAt > 0 && Date.now() - lastRealtimeRequestAt <= REALTIME_CHAT_REUSE_WINDOW_MS) {
       return;
     }
 
-    const requestKey = `realtime-${deviceId}-${randomUUID()}`;
-    const created = await this.client.createSession({
-      key: requestKey,
-      label: "Realtime voice",
-      model: state.model ?? undefined
-    });
+    const baseLabel = realtimeSessionLabel(firstRequestText);
+    const existingLabels = new Set<string>();
+    const { created, requestKey } = await this.createRealtimeSessionWithUniqueLabel(deviceId, state, baseLabel, existingLabels);
     const record = created && typeof created === "object" ? created as Record<string, unknown> : {};
     const key = typeof record.key === "string" && record.key.trim() ? record.key.trim() : undefined;
     state.sessionKey = key ?? `agent:${this.config.openClawChatAgentId}:explicit:${requestKey}`;
@@ -477,6 +474,49 @@ export class OpenClawChatBridge {
     state.pendingFirstMessageDisplayName = false;
     this.sendState(deviceId, "Started a new realtime chat");
     await this.refreshDevice(deviceId);
+  }
+
+  private async createRealtimeSessionWithUniqueLabel(
+    deviceId: string,
+    state: DeviceChatState,
+    baseLabel: string,
+    existingLabels: Set<string>
+  ): Promise<{ created: unknown; requestKey: string }> {
+    let lastDuplicateError: unknown;
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const label = numberedLabel(baseLabel, attempt);
+      if (existingLabels.has(label.toLowerCase())) {
+        continue;
+      }
+      const requestKey = `realtime-${deviceId}-${randomUUID()}`;
+      try {
+        const created = await this.client.createSession({
+          key: requestKey,
+          label,
+          model: state.model ?? undefined
+        });
+        return { created, requestKey };
+      } catch (error) {
+        if (!isDuplicateSessionLabelError(error)) {
+          throw error;
+        }
+        lastDuplicateError = error;
+        existingLabels.add(label.toLowerCase());
+      }
+    }
+
+    const requestKey = `realtime-${deviceId}-${randomUUID()}`;
+    const suffix = Date.now().toString(36).slice(-4);
+    try {
+      const created = await this.client.createSession({
+        key: requestKey,
+        label: numberedLabel(`${baseLabel} ${suffix}`, 0),
+        model: state.model ?? undefined
+      });
+      return { created, requestKey };
+    } catch {
+      throw lastDuplicateError instanceof Error ? lastDuplicateError : new Error("Could not create a unique realtime chat session label");
+    }
   }
 
   private async refreshDevice(deviceId: string): Promise<void> {
@@ -904,6 +944,24 @@ function firstMessageDisplayName(text: string): string | undefined {
     return undefined;
   }
   return normalized.length <= 64 ? normalized : `${normalized.slice(0, 61).trimEnd()}...`;
+}
+
+function realtimeSessionLabel(text: string): string {
+  return firstMessageDisplayName(text) ?? "Realtime voice";
+}
+
+function numberedLabel(baseLabel: string, attempt: number): string {
+  const suffix = attempt <= 0 ? "" : ` ${attempt + 1}`;
+  const maxBaseLength = 64 - suffix.length;
+  const base = baseLabel.length <= maxBaseLength
+    ? baseLabel
+    : baseLabel.slice(0, maxBaseLength).trimEnd();
+  return `${base}${suffix}`;
+}
+
+function isDuplicateSessionLabelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /label|name|display/i.test(message) && /already|duplicate|exists|unique|used/i.test(message);
 }
 
 function reasoningStreamEnabled(level: string | null | undefined): boolean | null {

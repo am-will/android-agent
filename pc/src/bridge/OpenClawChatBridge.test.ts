@@ -26,6 +26,7 @@ class FakeGatewayClient {
   readonly created: Array<{ key?: string; label?: string; model?: string }> = [];
   readonly patched: Array<{ sessionKey: string; patch: Record<string, unknown> }> = [];
   readonly aborted: Array<{ sessionKey: string; runId?: string }> = [];
+  readonly duplicateLabels = new Set<string>();
   private runCount = 0;
 
   addEventListener(handler: GatewayEventHandler): () => void {
@@ -58,6 +59,9 @@ class FakeGatewayClient {
 
   async createSession(options: { key?: string; label?: string; model?: string }): Promise<unknown> {
     this.created.push(options);
+    if (options.label && this.duplicateLabels.has(options.label)) {
+      throw new Error(`Session label "${options.label}" is already used`);
+    }
     return { key: `agent:main:explicit:${options.key ?? "created"}`, sessionId: `session_${this.created.length}` };
   }
 
@@ -151,6 +155,8 @@ test("realtime requests start a fresh chat only outside the reuse window", async
     assert.deepEqual(await third, { finalMessage: "Done three" });
 
     assert.equal(client.created.length, 2);
+    assert.equal(client.created[0]?.label, "Summarize my project");
+    assert.equal(client.created[1]?.label, "Start fresh");
     assert.deepEqual(
       chatMessages.filter((message) => message.type === "chat.message").map((message) => message.message.text),
       ["Summarize my project", "Add one more detail", "Start fresh"]
@@ -158,6 +164,31 @@ test("realtime requests start a fresh chat only outside the reuse window", async
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("realtime session labels retry with numbered suffixes on duplicates", async () => {
+  const { bridge, client } = createHarness();
+  client.duplicateLabels.add("Summarize my project");
+
+  const request = bridge.handleRealtimeRequest({
+    type: "user_request",
+    deviceId: "pixel",
+    inputType: "text",
+    text: "Summarize my project"
+  }, { taskKind: "general", callId: "call_1" });
+  await waitFor(() => client.sent.length === 1);
+  client.emit({
+    event: "chat",
+    payload: {
+      sessionKey: client.sent[0]?.sessionKey,
+      runId: "run_1",
+      state: "final",
+      message: "Done"
+    }
+  });
+
+  assert.deepEqual(await request, { finalMessage: "Done" });
+  assert.deepEqual(client.created.map((entry) => entry.label), ["Summarize my project", "Summarize my project 2"]);
 });
 
 test("new chats use uuid labels until first message display name is set", async () => {
