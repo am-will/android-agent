@@ -23,6 +23,7 @@ import {
 } from "../protocol/messages.js";
 import { getBridgeConfig } from "./config.js";
 import { PhoneHub } from "./PhoneHub.js";
+import { isAuthorizedHttpRequest } from "./httpAuth.js";
 
 const config = getBridgeConfig();
 const audit = new AuditLog();
@@ -163,6 +164,12 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
 
   if (req.method === "GET" && url.pathname === "/health") {
     json(res, 200, { ok: true, phones: hub.listPhones() });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/") && !isAuthorizedHttpRequest(req.headers, config.token)) {
+    res.setHeader("www-authenticate", "Bearer");
+    json(res, 401, { ok: false, error: "unauthorized" });
     return;
   }
 
