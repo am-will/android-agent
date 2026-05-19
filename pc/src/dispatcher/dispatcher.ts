@@ -36,10 +36,12 @@ export class Dispatcher {
 
   constructor(
     private readonly hub: PhoneHub,
-    private readonly audit?: AuditLog
+    private readonly audit?: AuditLog,
+    client?: AgentClient,
+    kind?: DispatcherKind
   ) {
-    this.kind = dispatcherKindFromEnv();
-    this.client = createAgentClient(this.kind, audit);
+    this.kind = kind ?? dispatcherKindFromEnv();
+    this.client = client ?? createAgentClient(this.kind, audit);
   }
 
   async handleUserRequest(request: UserRequestMessage, options: Pick<AgentRequestOptions, "taskKind"> = {}): Promise<AgentRunResult> {
@@ -59,9 +61,8 @@ export class Dispatcher {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       sink.error(message);
-      const fallback = await new FallbackAgentClient().submitUserRequest(request.text, sink);
-      this.audit?.endTurn(request.deviceId, { error: message, fallback });
-      return { ...fallback, error: message };
+      this.audit?.endTurn(request.deviceId, { error: message });
+      return { finalMessage: message, error: message };
     }
   }
 
