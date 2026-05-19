@@ -338,6 +338,10 @@ class OverlayController(
         return panelView != null && lastChatState.sessionKey == key
     }
 
+    fun isBubbleVisible(): Boolean {
+        return isOverlayAttached(bubbleView)
+    }
+
     fun openChatPanel(
         markCurrentSessionViewed: Boolean = true,
         presentation: PanelPresentation = PanelPresentation.Popup

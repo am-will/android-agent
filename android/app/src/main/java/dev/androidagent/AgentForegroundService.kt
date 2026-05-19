@@ -103,17 +103,15 @@ class AgentForegroundService : Service() {
                 return START_STICKY
             }
             ACTION_OPEN_CHAT -> {
-                overlayController?.show()
-                overlayController?.openPanel()
+                openChatFromIntent(intent)
                 return START_STICKY
             }
             ACTION_OPEN_CHAT_SESSION -> {
                 val sessionKey = intent.getStringExtra(EXTRA_SESSION_KEY)
                 if (!sessionKey.isNullOrBlank()) {
-                    openChatSessionFromNotification(sessionKey)
+                    openChatSessionFromNotification(sessionKey, panelPresentationFrom(intent))
                 } else {
-                    overlayController?.show()
-                    overlayController?.openPanel()
+                    openChatFromIntent(intent)
                 }
                 return START_STICKY
             }
@@ -286,6 +284,14 @@ class AgentForegroundService : Service() {
                 Intent(this, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             )
+        }
+    }
+
+    private fun panelPresentationFrom(intent: Intent?): OverlayController.PanelPresentation {
+        return if (intent?.getStringExtra(EXTRA_PANEL_PRESENTATION) == PANEL_PRESENTATION_FULLSCREEN) {
+            OverlayController.PanelPresentation.Fullscreen
+        } else {
+            OverlayController.PanelPresentation.Popup
         }
     }
 
