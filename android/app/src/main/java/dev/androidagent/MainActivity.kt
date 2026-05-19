@@ -302,10 +302,6 @@ class MainActivity : ComponentActivity() {
             PanelAnimationStyle.Circular to "Circular reveal (from bubble)",
             PanelAnimationStyle.Slide to "Slide up from bottom"
         )
-        val scrimOptions = listOf(
-            PanelScrimStyle.Ripple to "Radiate from bubble",
-            PanelScrimStyle.Fade to "Fade in"
-        )
 
         content.addView(fieldLabel("Panel animation", tokens))
         content.addView(body("How the chat modal appears when you tap the bubble.", tokens).apply {
@@ -318,17 +314,6 @@ class MainActivity : ComponentActivity() {
         )
         content.addView(animationSpinner, stackedParams(DesignTokens.Spacing.sm))
 
-        content.addView(fieldLabel("Backdrop", tokens), stackedParams(DesignTokens.Spacing.lg))
-        content.addView(body("How the dim background appears behind the modal.", tokens).apply {
-            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
-        }, stackedParams(DesignTokens.Spacing.xs))
-        val scrimSpinner = styledSpinner(
-            scrimOptions.map { it.second },
-            scrimOptions.indexOfFirst { it.first == current.scrimAnimation }.coerceAtLeast(0),
-            tokens
-        )
-        content.addView(scrimSpinner, stackedParams(DesignTokens.Spacing.sm))
-
         val dialog = AlertDialog.Builder(this)
             .setTitle("Appearance")
             .setView(ScrollView(this).apply {
@@ -337,8 +322,7 @@ class MainActivity : ComponentActivity() {
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Save") { _, _ ->
                 val saved = AppearancePrefs(
-                    panelAnimation = animationOptions.getOrElse(animationSpinner.selectedItemPosition) { animationOptions.first() }.first,
-                    scrimAnimation = scrimOptions.getOrElse(scrimSpinner.selectedItemPosition) { scrimOptions.first() }.first
+                    panelAnimation = animationOptions.getOrElse(animationSpinner.selectedItemPosition) { animationOptions.first() }.first
                 )
                 AppearancePrefsStore.save(this, saved)
             }

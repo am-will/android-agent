@@ -2173,48 +2173,34 @@ class OverlayController(
                     anim.start()
                 }
                 scrim.post {
-                    if (!scrim.isAttachedToWindow) {
+                    if (!scrim.isAttachedToWindow || scrim.width == 0 || scrim.height == 0) {
                         scrim.alpha = 1f
                         scrim.visibility = View.VISIBLE
                         return@post
                     }
-                    when (prefs.scrimAnimation) {
-                        PanelScrimStyle.Ripple -> {
-                            if (scrim.width == 0 || scrim.height == 0) {
-                                scrim.alpha = 1f
-                                scrim.visibility = View.VISIBLE
-                                return@post
+                    val center = revealCenterForScrim()
+                    val finalRadius = maxRevealRadius(scrim, center.cx, center.cy)
+                    scrim.alpha = 1f
+                    scrim.visibility = View.VISIBLE
+                    val anim = ViewAnimationUtils.createCircularReveal(
+                        scrim,
+                        center.cx,
+                        center.cy,
+                        center.bubbleRadius,
+                        finalRadius
+                    ).apply {
+                        duration = 280L
+                        interpolator = DecelerateInterpolator()
+                        addListener(object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) {
+                                if (panelScrimOpenAnimator === animation) {
+                                    panelScrimOpenAnimator = null
+                                }
                             }
-                            val center = revealCenterForScrim()
-                            val finalRadius = maxRevealRadius(scrim, center.cx, center.cy)
-                            scrim.alpha = 1f
-                            scrim.visibility = View.VISIBLE
-                            val anim = ViewAnimationUtils.createCircularReveal(
-                                scrim,
-                                center.cx,
-                                center.cy,
-                                center.bubbleRadius,
-                                finalRadius
-                            ).apply {
-                                duration = 280L
-                                interpolator = DecelerateInterpolator()
-                                addListener(object : AnimatorListenerAdapter() {
-                                    override fun onAnimationEnd(animation: Animator) {
-                                        if (panelScrimOpenAnimator === animation) {
-                                            panelScrimOpenAnimator = null
-                                        }
-                                    }
-                                })
-                            }
-                            panelScrimOpenAnimator = anim
-                            anim.start()
-                        }
-                        PanelScrimStyle.Fade -> {
-                            scrim.alpha = 0f
-                            scrim.visibility = View.VISIBLE
-                            scrim.animate().alpha(1f).setDuration(180L).start()
-                        }
+                        })
                     }
+                    panelScrimOpenAnimator = anim
+                    anim.start()
                 }
             }
         }
@@ -2285,38 +2271,28 @@ class OverlayController(
                 anim.start()
 
                 if (scrim != null && scrim.isAttachedToWindow && scrim.width > 0 && scrim.height > 0) {
-                    when (prefs.scrimAnimation) {
-                        PanelScrimStyle.Ripple -> {
-                            val scrimCenter = revealCenterForScrim()
-                            val scrimStart = maxRevealRadius(scrim, scrimCenter.cx, scrimCenter.cy)
-                            val scrimAnim = ViewAnimationUtils.createCircularReveal(
-                                scrim,
-                                scrimCenter.cx,
-                                scrimCenter.cy,
-                                scrimStart,
-                                scrimCenter.bubbleRadius
-                            ).apply {
-                                duration = 240L
-                                interpolator = AccelerateInterpolator()
-                                addListener(object : AnimatorListenerAdapter() {
-                                    override fun onAnimationEnd(animation: Animator) {
-                                        if (panelScrimCloseAnimator === animation) {
-                                            panelScrimCloseAnimator = null
-                                        }
-                                        scrim.alpha = 0f
-                                    }
-                                })
+                    val scrimCenter = revealCenterForScrim()
+                    val scrimStart = maxRevealRadius(scrim, scrimCenter.cx, scrimCenter.cy)
+                    val scrimAnim = ViewAnimationUtils.createCircularReveal(
+                        scrim,
+                        scrimCenter.cx,
+                        scrimCenter.cy,
+                        scrimStart,
+                        scrimCenter.bubbleRadius
+                    ).apply {
+                        duration = 240L
+                        interpolator = AccelerateInterpolator()
+                        addListener(object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) {
+                                if (panelScrimCloseAnimator === animation) {
+                                    panelScrimCloseAnimator = null
+                                }
+                                scrim.alpha = 0f
                             }
-                            panelScrimCloseAnimator = scrimAnim
-                            scrimAnim.start()
-                        }
-                        PanelScrimStyle.Fade -> {
-                            scrim.animate()
-                                .alpha(0f)
-                                .setDuration(220L)
-                                .start()
-                        }
+                        })
                     }
+                    panelScrimCloseAnimator = scrimAnim
+                    scrimAnim.start()
                 }
             }
         }
