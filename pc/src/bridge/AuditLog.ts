@@ -1,4 +1,5 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 
 interface AuditEvent {
@@ -37,6 +38,7 @@ export class AuditLog {
   private readonly events: AuditEvent[] = [];
   private readonly activeTurns = new Map<string, string>();
   private readonly filePath: string;
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly maxEvents = 1_000,
@@ -72,7 +74,12 @@ export class AuditLog {
     if (this.events.length > this.maxEvents) {
       this.events.splice(0, this.events.length - this.maxEvents);
     }
-    appendFileSync(this.filePath, `${JSON.stringify(event)}\n`);
+    const line = `${JSON.stringify(event)}\n`;
+    this.writeChain = this.writeChain
+      .then(() => appendFile(this.filePath, line))
+      .catch((error) => {
+        console.warn(`[audit] failed to write event ${event.id}: ${error instanceof Error ? error.message : String(error)}`);
+      });
   }
 
   recent(limit = 100): AuditEvent[] {
@@ -85,5 +92,9 @@ export class AuditLog {
       turnId,
       events: this.events.filter((event) => event.turnId === turnId)
     }));
+  }
+
+  async flush(): Promise<void> {
+    await this.writeChain;
   }
 }
