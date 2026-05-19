@@ -377,7 +377,7 @@ class OverlayController(
     fun minimizePanelFromSystemHome() {
         mainHandler.post {
             if (panelView != null) {
-                dismissPanel(force = true)
+                dismissPanel()
             }
         }
     }
