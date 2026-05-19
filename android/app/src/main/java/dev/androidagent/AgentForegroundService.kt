@@ -7,7 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.Manifest
 import android.app.ForegroundServiceStartNotAllowedException
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -25,6 +28,8 @@ import dev.androidagent.chat.ChatTimelineItem
 import dev.androidagent.chat.ChatTimelineKind
 import dev.androidagent.chat.ChatUnreadReply
 import dev.androidagent.chat.ChatUsageSummary
+import dev.androidagent.net.BridgeConnectionPhase
+import dev.androidagent.net.BridgeConnectionState
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
 import dev.androidagent.voice.transcription.VoiceTranscriptionManager
@@ -48,6 +53,14 @@ class AgentForegroundService : Service() {
     private var chatState = ChatState()
     private var pendingNewChat = false
     private var notifiedReplySessions = emptySet<String>()
+    private val closeSystemDialogsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_CLOSE_SYSTEM_DIALOGS) return
+            if (intent.getStringExtra(SYSTEM_DIALOG_REASON) == SYSTEM_DIALOG_REASON_HOME_KEY) {
+                overlayController?.minimizePanelFromSystemHome()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -95,6 +108,7 @@ class AgentForegroundService : Service() {
             onStateChanged = { state -> overlayController?.setVoiceState(state) }
         )
         connectWebSocket()
+        registerCloseSystemDialogsReceiver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -137,6 +151,7 @@ class AgentForegroundService : Service() {
         voiceTranscriptionManager?.close()
         serviceScope.cancel()
         webSocketClient?.close()
+        unregisterCloseSystemDialogsReceiver()
         overlayController?.hide()
         isRunning = false
         broadcastRunningState()
@@ -155,6 +170,7 @@ class AgentForegroundService : Service() {
             config = config,
             commandExecutor = executor,
             onStatus = ::handleBridgeStatus,
+            onConnectionState = ::handleBridgeConnectionState,
             onRealtimeSdp = { voiceRuntimeController?.onRealtimeSdp(it) },
             onRealtimeTranscriptDelta = { voiceRuntimeController?.onRealtimeTranscriptDelta(it) },
             onRealtimeItemAdded = { voiceRuntimeController?.onRealtimeItemAdded(it) },
@@ -165,6 +181,19 @@ class AgentForegroundService : Service() {
             onRealtimeTaskStatus = { voiceRuntimeController?.onRealtimeTaskStatus(it) },
             onChatMessage = { handleChatMessage(it) }
         ).also { it.connect() }
+    }
+
+    private fun registerCloseSystemDialogsReceiver() {
+        ContextCompat.registerReceiver(
+            this,
+            closeSystemDialogsReceiver,
+            IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    private fun unregisterCloseSystemDialogsReceiver() {
+        runCatching { unregisterReceiver(closeSystemDialogsReceiver) }
     }
 
     private fun submitChatText(text: String): Boolean {
@@ -375,6 +404,21 @@ class AgentForegroundService : Service() {
         overlayController?.setTranscriptionState(state)
     }
 
+    private fun handleBridgeConnectionState(state: BridgeConnectionState) {
+        serviceScope.launch {
+            overlayController?.setHostConnectionState(
+                OverlayController.HostConnectionState(
+                    phase = when (state.phase) {
+                        BridgeConnectionPhase.CONNECTING -> OverlayController.HostConnectionPhase.CONNECTING
+                        BridgeConnectionPhase.CONNECTED -> OverlayController.HostConnectionPhase.CONNECTED
+                        BridgeConnectionPhase.ERROR -> OverlayController.HostConnectionPhase.ERROR
+                    },
+                    message = state.message
+                )
+            )
+        }
+    }
+
     private fun handleBridgeStatus(text: String, status: String) {
         serviceScope.launch {
             overlayController?.setStatus(text)
@@ -579,6 +623,8 @@ class AgentForegroundService : Service() {
         private const val REPLY_NOTIFICATION_ID_BASE = 10_000
         private const val REQUEST_OPEN_CHAT = 2
         private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and Open Claw bridge are running"
+        private const val SYSTEM_DIALOG_REASON = "reason"
+        private const val SYSTEM_DIALOG_REASON_HOME_KEY = "homekey"
         const val ACTION_STATE_CHANGED = "dev.openclawagent.action.AGENT_SERVICE_STATE_CHANGED"
         const val EXTRA_IS_RUNNING = "isRunning"
         const val CHANNEL_ID = "open-claw-agent"

@@ -167,12 +167,30 @@ class OverlayController(
     private var anchoredPicker: AnchoredPicker? = null
     private var headerSessionAnchor: View? = null
     private var headerSessionChevron: ImageView? = null
+    private var connectionIndicatorButton: HostConnectionIndicatorButton? = null
+    private var connectionPopupView: View? = null
+    private var connectionPopupScrimView: View? = null
     private var plusButton: ImageButton? = null
+    private var lastHostConnectionState = HostConnectionState(
+        phase = HostConnectionPhase.CONNECTING,
+        message = "Checking host connection..."
+    )
 
     enum class PanelPresentation {
         Popup,
         Fullscreen
     }
+
+    enum class HostConnectionPhase {
+        CONNECTING,
+        CONNECTED,
+        ERROR
+    }
+
+    data class HostConnectionState(
+        val phase: HostConnectionPhase,
+        val message: String
+    )
 
     private data class PanelBounds(val height: Int, val y: Int)
     private data class SlashToken(val start: Int, val end: Int, val query: String)
@@ -354,6 +372,19 @@ class OverlayController(
 
     fun setStatus(text: String) {
         statusText?.setText(text)
+    }
+
+    fun minimizePanelFromSystemHome() {
+        mainHandler.post {
+            if (panelView != null) {
+                dismissPanel(force = true)
+            }
+        }
+    }
+
+    fun setHostConnectionState(state: HostConnectionState) {
+        lastHostConnectionState = state
+        mainHandler.post { renderHostConnectionState(state) }
     }
 
     fun setVoiceState(state: VoiceRuntimeState) {
@@ -782,6 +813,7 @@ class OverlayController(
 
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
+        renderHostConnectionState(lastHostConnectionState)
         renderTranscriptionState(lastTranscriptionState)
 
         runPanelOpenAnimation(host, scrim, appearancePrefs(), defaultBounds.height)
@@ -793,6 +825,11 @@ class OverlayController(
     }
 
     private fun buildModalHeader(tokens: ThemeTokens, presentation: PanelPresentation): View {
+        val connectionButton = HostConnectionIndicatorButton(context).apply {
+            bind(tokens, lastHostConnectionState)
+            setOnClickListener { showHostConnectionPopup(this) }
+        }
+        connectionIndicatorButton = connectionButton
         val voiceButton = iconButton(
             tokens = tokens,
             drawableRes = R.drawable.ic_voice_wave,
@@ -880,6 +917,7 @@ class OverlayController(
         val actions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            addView(connectionButton, LinearLayout.LayoutParams(headerSize, headerSize).apply { rightMargin = headerGap })
             addView(voiceButton, LinearLayout.LayoutParams(headerSize, headerSize).apply { rightMargin = headerGap })
             addView(settingsButton, LinearLayout.LayoutParams(headerSize, headerSize).apply { rightMargin = headerGap })
             addView(closeButton, LinearLayout.LayoutParams(headerSize, headerSize))
@@ -898,7 +936,8 @@ class OverlayController(
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(DesignTokens.Spacing.xs), 0, dp(DesignTokens.Spacing.xs))
-                addView(titleStack, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(titleStack, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(Space(context), LinearLayout.LayoutParams(0, 1, 1f))
                 addView(actions)
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
@@ -1208,6 +1247,157 @@ class OverlayController(
             return
         }
         picker.show(host, anchor, title, sections, onDismiss = onDismiss)
+    }
+
+    private fun renderHostConnectionState(state: HostConnectionState) {
+        connectionIndicatorButton?.bind(tokens(), state)
+    }
+
+    private fun showHostConnectionPopup(anchor: View) {
+        val host = panelHost ?: return
+        if (connectionPopupView != null) {
+            dismissHostConnectionPopup()
+            return
+        }
+        anchoredPicker?.dismiss()
+
+        val tokens = tokens()
+        val state = lastHostConnectionState
+        val statusColor = hostConnectionColor(tokens, state.phase)
+        val scrim = View(context).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            isClickable = true
+            setOnClickListener { dismissHostConnectionPopup() }
+        }
+        host.addView(scrim, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        connectionPopupScrimView = scrim
+
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Drawables.dropdownSheet(context, tokens)
+            elevation = dp(DesignTokens.Elevation.popover).toFloat()
+            isClickable = true
+            setPadding(
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.md)
+            )
+        }
+        card.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(View(context).apply {
+                background = Drawables.circle(statusColor)
+            }, LinearLayout.LayoutParams(dp(10), dp(10)).apply {
+                rightMargin = dp(DesignTokens.Spacing.sm)
+            })
+            addView(TextView(context).apply {
+                text = hostConnectionTitle(state.phase)
+                Typography.applyCallout(this, tokens)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(statusColor)
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        })
+        card.addView(TextView(context).apply {
+            text = hostConnectionMessage(state)
+            Typography.applyFootnote(this, tokens, secondary = state.phase != HostConnectionPhase.ERROR)
+            if (state.phase == HostConnectionPhase.ERROR) {
+                setTextColor(tokens.danger)
+            }
+            setPadding(0, dp(DesignTokens.Spacing.sm), 0, 0)
+            setLineSpacing(dp(2).toFloat(), 1.0f)
+        })
+
+        val width = (context.resources.displayMetrics.widthPixels - dp(DesignTokens.Spacing.xxl * 2))
+            .coerceAtMost(dp(300))
+        val params = FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = dp(DesignTokens.Spacing.md)
+            topMargin = dp(DesignTokens.Spacing.md)
+        }
+        host.addView(card, params)
+        connectionPopupView = card
+        card.alpha = 0f
+        card.scaleX = 0.96f
+        card.scaleY = 0.96f
+        card.post {
+            positionHostConnectionPopup(host, anchor, card)
+            card.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(140L)
+                .start()
+        }
+    }
+
+    private fun dismissHostConnectionPopup() {
+        val popup = connectionPopupView
+        val scrim = connectionPopupScrimView
+        connectionPopupView = null
+        connectionPopupScrimView = null
+        scrim?.let { (it.parent as? FrameLayout)?.removeView(it) }
+        popup?.animate()
+            ?.alpha(0f)
+            ?.scaleX(0.96f)
+            ?.scaleY(0.96f)
+            ?.setDuration(110L)
+            ?.withEndAction { (popup.parent as? FrameLayout)?.removeView(popup) }
+            ?.start()
+    }
+
+    private fun positionHostConnectionPopup(host: FrameLayout, anchor: View, popup: View) {
+        val hostLocation = IntArray(2)
+        val anchorLocation = IntArray(2)
+        host.getLocationOnScreen(hostLocation)
+        anchor.getLocationOnScreen(anchorLocation)
+
+        val sideMargin = dp(DesignTokens.Spacing.md)
+        val gap = dp(DesignTokens.Spacing.sm)
+        val anchorLeft = anchorLocation[0] - hostLocation[0]
+        val anchorTop = anchorLocation[1] - hostLocation[1]
+        val anchorBottom = anchorTop + anchor.height
+        val anchorCenterX = anchorLeft + anchor.width / 2
+        val popupWidth = popup.measuredWidth.coerceAtLeast(dp(220))
+        val popupHeight = popup.measuredHeight.coerceAtLeast(dp(88))
+
+        val params = popup.layoutParams as FrameLayout.LayoutParams
+        params.leftMargin = (anchorCenterX - popupWidth / 2)
+            .coerceAtLeast(sideMargin)
+            .coerceAtMost(host.width - popupWidth - sideMargin)
+            .coerceAtLeast(sideMargin)
+        params.topMargin = if (anchorBottom + gap + popupHeight + sideMargin > host.height && anchorTop > popupHeight + gap) {
+            anchorTop - popupHeight - gap
+        } else {
+            anchorBottom + gap
+        }
+        popup.layoutParams = params
+        popup.pivotX = (anchorCenterX - params.leftMargin).toFloat().coerceIn(0f, popupWidth.toFloat())
+        popup.pivotY = if (params.topMargin < anchorTop) popupHeight.toFloat() else 0f
+    }
+
+    private fun hostConnectionTitle(phase: HostConnectionPhase): String = when (phase) {
+        HostConnectionPhase.CONNECTING -> "Connecting to Host"
+        HostConnectionPhase.CONNECTED -> "Host Connected"
+        HostConnectionPhase.ERROR -> "Host Connection Error"
+    }
+
+    private fun hostConnectionMessage(state: HostConnectionState): String {
+        return state.message.takeIf { it.isNotBlank() } ?: when (state.phase) {
+            HostConnectionPhase.CONNECTING -> "Trying to reach the OpenClaw bridge on the host machine."
+            HostConnectionPhase.CONNECTED -> "The Android app is registered with the OpenClaw bridge."
+            HostConnectionPhase.ERROR -> "The Android app could not reach or register with the OpenClaw bridge."
+        }
+    }
+
+    private fun hostConnectionColor(tokens: ThemeTokens, phase: HostConnectionPhase): Int = when (phase) {
+        HostConnectionPhase.CONNECTING -> tokens.warning
+        HostConnectionPhase.CONNECTED -> tokens.success
+        HostConnectionPhase.ERROR -> tokens.danger
     }
 
     private fun showModelChoices() {
@@ -2402,6 +2592,7 @@ class OverlayController(
         if (cancelTranscription && lastTranscriptionState.isRecording) {
             onCancelTranscription()
         }
+        dismissHostConnectionPopup()
         anchoredPicker?.dismiss()
         anchoredPicker = null
 
@@ -2465,6 +2656,7 @@ class OverlayController(
         contextUsageView = null
         headerSessionAnchor = null
         headerSessionChevron = null
+        connectionIndicatorButton = null
         plusButton = null
         if (dismissedPresentation == PanelPresentation.Fullscreen) {
             restoreBubbleAfterFullscreenDismiss()
@@ -2941,6 +3133,39 @@ class OverlayController(
     private fun maxTranscriptHeight(): Int {
         val modalBudget = (context.resources.displayMetrics.heightPixels * VOICE_MODAL_MAX_SCREEN_FRACTION).toInt()
         return (modalBudget - dp(220)).coerceAtLeast(dp(96))
+    }
+
+    private inner class HostConnectionIndicatorButton(context: Context) : View(context) {
+        private var tokens: ThemeTokens = tokens()
+        private var state = lastHostConnectionState
+        private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        init {
+            isClickable = true
+            isFocusable = true
+            minimumWidth = dp(DesignTokens.Sizes.compact)
+            minimumHeight = dp(DesignTokens.Sizes.compact)
+        }
+
+        fun bind(tokens: ThemeTokens, state: HostConnectionState) {
+            this.tokens = tokens
+            this.state = state
+            background = Drawables.pillSurface(context, tokens)
+            contentDescription = "${hostConnectionTitle(state.phase)}. Tap for host connection details."
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val color = hostConnectionColor(tokens, state.phase)
+            val cx = width / 2f
+            val cy = height / 2f
+            haloPaint.color = DesignTokens.withAlpha(color, if (tokens.isDark) 0x44 else 0x2E)
+            dotPaint.color = color
+            canvas.drawCircle(cx, cy, dp(7).toFloat(), haloPaint)
+            canvas.drawCircle(cx, cy, dp(4).toFloat(), dotPaint)
+        }
     }
 
     private inner class ContextUsageView(context: Context) : View(context) {

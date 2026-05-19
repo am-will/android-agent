@@ -16,10 +16,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
+enum class BridgeConnectionPhase {
+    CONNECTING,
+    CONNECTED,
+    ERROR
+}
+
+data class BridgeConnectionState(
+    val phase: BridgeConnectionPhase,
+    val message: String
+)
+
 class PhoneWebSocketClient(
     private val config: AgentConfig,
     private val commandExecutor: AccessibilityCommandExecutor,
     private val onStatus: (String, String) -> Unit,
+    private val onConnectionState: (BridgeConnectionState) -> Unit = {},
     private val onRealtimeSdp: (JSONObject) -> Unit = {},
     private val onRealtimeTranscriptDelta: (JSONObject) -> Unit = {},
     private val onRealtimeItemAdded: (JSONObject) -> Unit = {},
@@ -52,7 +64,9 @@ class PhoneWebSocketClient(
         registered = false
         val request = Request.Builder().url(config.hostUrl).build()
         socket = client.newWebSocket(request, this)
-        onStatus("Connecting to ${config.hostUrl}", "info")
+        val statusText = "Connecting to ${config.hostUrl}"
+        onStatus(statusText, "info")
+        onConnectionState(BridgeConnectionState(BridgeConnectionPhase.CONNECTING, statusText))
     }
 
     fun close() {
@@ -221,7 +235,9 @@ class PhoneWebSocketClient(
             )
         val accepted = webSocket.send(register.toString())
         Log.i(TAG, "register sent=$accepted deviceId=${config.deviceId}")
-        onStatus("Authenticating with ${config.hostUrl}", "info")
+        val statusText = "Authenticating with ${config.hostUrl}"
+        onStatus(statusText, "info")
+        onConnectionState(BridgeConnectionState(BridgeConnectionPhase.CONNECTING, statusText))
         scheduleRegisterTimeout(webSocket)
     }
 
@@ -237,7 +253,9 @@ class PhoneWebSocketClient(
                 connected = true
                 cancelRegisterTimeout()
                 sendChatOpen()
-                onStatus("Connected and registered as ${config.deviceId}", "info")
+                val connectedText = "Connected and registered as ${config.deviceId}"
+                onStatus(connectedText, "info")
+                onConnectionState(BridgeConnectionState(BridgeConnectionPhase.CONNECTED, connectedText))
                 return
             }
         }
@@ -276,7 +294,9 @@ class PhoneWebSocketClient(
         connected = false
         registered = false
         cancelRegisterTimeout()
-        onStatus("WebSocket error: ${t.message}", "error")
+        val statusText = "WebSocket error: ${t.message}"
+        onStatus(statusText, "error")
+        onConnectionState(BridgeConnectionState(BridgeConnectionPhase.ERROR, statusText))
         reportBridgeChatError("Bridge connection failed: ${t.message ?: "unknown error"}")
         scheduleReconnect()
     }
@@ -300,6 +320,7 @@ class PhoneWebSocketClient(
             else -> "Disconnected: $reason (code $code)" to false
         }
         onStatus(statusText, "error")
+        onConnectionState(BridgeConnectionState(BridgeConnectionPhase.ERROR, statusText))
         reportBridgeChatError(statusText)
         scheduleReconnect(longBackoff)
     }
@@ -311,6 +332,7 @@ class PhoneWebSocketClient(
         if (!sent) {
             val error = "Bridge is not registered. Check the PC bridge at ${config.hostUrl}; reconnecting..."
             onStatus(error, "error")
+            onConnectionState(BridgeConnectionState(BridgeConnectionPhase.ERROR, error))
             if (reportChatError) {
                 reportBridgeChatError(error)
             }
@@ -370,6 +392,7 @@ class PhoneWebSocketClient(
         cancelRegisterTimeout()
         webSocket.cancel()
         onStatus(statusText, "error")
+        onConnectionState(BridgeConnectionState(BridgeConnectionPhase.ERROR, statusText))
         reportBridgeChatError(statusText)
         scheduleReconnect()
     }
