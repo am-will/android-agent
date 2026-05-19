@@ -3086,6 +3086,7 @@ class OverlayController(
         private const val MODAL_CLOSE_HOT_ZONE_HEIGHT_DP = 88
         private const val KEYBOARD_HEIGHT_ESTIMATE_FRACTION = 0.485f
         private const val KEYBOARD_COMPOSER_GAP_DP = 4
+        private const val FULLSCREEN_KEYBOARD_BOTTOM_CLEARANCE_DP = 28
         const val MIN_BUBBLE_SIZE_DP = 40
         const val DEFAULT_BUBBLE_SIZE_DP = 88
         const val MAX_BUBBLE_SIZE_DP = 132
@@ -3235,7 +3236,7 @@ class OverlayController(
         }
 
         panel.translationY = 0f
-        setKeyboardSpacerHeight(0)
+        setKeyboardSpacerHeight(keyboardBottomClearance())
         val minPanelHeight = dp(300)
         val desiredY = defaultY.coerceAtMost((keyboardTop - minPanelHeight).coerceAtLeast(dp(8)))
         val desiredHeight = (keyboardTop - desiredY - keyboardComposerGap()).coerceAtLeast(dp(240))
@@ -3245,6 +3246,7 @@ class OverlayController(
             windowManager.updateViewLayout(panel, params)
             anchoredPicker?.reposition()
         }
+        anchoredPicker?.reposition()
     }
 
     private fun keyboardTopFromVisibleFrame(defaultPanelBottom: Int): Int? {
@@ -3336,6 +3338,14 @@ class OverlayController(
             0
         }
         return dp(KEYBOARD_COMPOSER_GAP_DP) + fullscreenExtraGap
+    }
+
+    private fun keyboardBottomClearance(): Int {
+        return if (activePanelPresentation == PanelPresentation.Fullscreen) {
+            dp(FULLSCREEN_KEYBOARD_BOTTOM_CLEARANCE_DP)
+        } else {
+            0
+        }
     }
 
     private fun estimatedKeyboardHeight(displayHeight: Int): Int {
