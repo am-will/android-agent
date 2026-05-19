@@ -3,14 +3,18 @@ import type { AgentRunResult, AgentTaskKind } from "../dispatcher/AgentClient.js
 import type { Dispatcher } from "../dispatcher/dispatcher.js";
 import type {
   ChatControlCommandMessage,
+  ChatErrorMessage,
+  ChatFinalMessage,
   ChatHistoryMessage,
   ChatNewSessionMessage,
   ChatOpenMessage,
   ChatOutboundMessage,
+  ChatReplyAvailableMessage,
   ChatSelectSessionMessage,
   ChatSendMessage,
   ChatSetModelMessage,
   ChatSetReasoningMessage,
+  ChatSessionSummary,
   ChatStopMessage,
   UserRequestMessage
 } from "../protocol/messages.js";
@@ -44,6 +48,14 @@ interface DeviceChatState {
   verboseLevel?: string | null;
   pendingFirstMessageDisplayName?: boolean;
   lastRealtimeRequestAt?: number | null;
+  pendingRuns: Map<string, PendingChatRun>;
+  sessionSummaries: Map<string, ChatSessionSummary>;
+}
+
+interface PendingChatRun {
+  sessionKey: string;
+  sessionId?: string | null;
+  startedAt: number;
 }
 
 interface GatewayChatClient {
@@ -142,6 +154,12 @@ export class OpenClawChatBridge {
       });
       state.sessionKey = result.sessionKey;
       state.runId = result.runId;
+      this.trackPendingRun(
+        state,
+        result.runId,
+        result.sessionKey,
+        message.sessionId ?? state.sessionId ?? null
+      );
       await this.maybeSetFirstMessageDisplayName(message.deviceId, text);
       this.audit?.record("openclaw_chat_send", message.deviceId, {
         sessionKey: result.sessionKey,
@@ -179,6 +197,9 @@ export class OpenClawChatBridge {
       });
     } finally {
       state.runId = null;
+      if (runId) {
+        state.pendingRuns.delete(runId);
+      }
       this.sendState(message.deviceId, "Stop requested");
     }
   }
@@ -300,19 +321,18 @@ export class OpenClawChatBridge {
     const state = this.stateFor(message.deviceId);
     const sessionKey = message.sessionKey ?? state.sessionKey;
     state.model = message.model;
-    await this.sendSlashCommand(message.deviceId, `/model ${message.model}`, sessionKey, `Model: ${message.model}`, `Model set to ${message.model}`);
+    await this.sendSlashCommand(message.deviceId, `/model ${message.model}`, sessionKey, `Model: ${message.model}`);
   }
 
   async setReasoning(message: ChatSetReasoningMessage): Promise<void> {
     const state = this.stateFor(message.deviceId);
     const sessionKey = message.sessionKey ?? state.sessionKey;
-    state.reasoningEffort = message.reasoningEffort;
+    state.reasoningEffort = normalizeThinkingLevel(message.reasoningEffort, state.reasoningEffort);
     await this.sendSlashCommand(
       message.deviceId,
-      `/think ${message.reasoningEffort}`,
+      `/think ${state.reasoningEffort}`,
       sessionKey,
-      `Reasoning: ${message.reasoningEffort}`,
-      `Reasoning set to ${message.reasoningEffort}`
+      `Reasoning: ${state.reasoningEffort}`
     );
   }
 
@@ -445,12 +465,14 @@ export class OpenClawChatBridge {
       sessionKey: this.config.openClawChatSessionKey,
       runId: null,
       model: null,
-      reasoningEffort: null,
+      reasoningEffort: "medium",
       reasoningStream: null,
       fastMode: null,
       verboseLevel: null,
       pendingFirstMessageDisplayName: false,
-      lastRealtimeRequestAt: null
+      lastRealtimeRequestAt: null,
+      pendingRuns: new Map(),
+      sessionSummaries: new Map()
     };
     this.devices.set(deviceId, created);
     return created;
@@ -568,11 +590,12 @@ export class OpenClawChatBridge {
     const state = this.stateFor(deviceId);
     const payload = await this.client.listSessions(50);
     const sessions = normalizeSessions(payload);
+    state.sessionSummaries = new Map(sessions.map((session) => [session.key, session]));
     const selected = sessions.find((session) => session.key === state.sessionKey);
     if (selected) {
       state.sessionId = selected.sessionId ?? null;
       state.model = selected.model ?? state.model ?? null;
-      state.reasoningEffort = selected.thinkingLevel ?? state.reasoningEffort ?? null;
+      state.reasoningEffort = normalizeThinkingLevel(selected.thinkingLevel, state.reasoningEffort);
       state.reasoningStream = reasoningStreamEnabled(selected.reasoningLevel) ?? state.reasoningStream ?? null;
       state.fastMode = selected.fastMode ?? null;
       state.verboseLevel = selected.verboseLevel ?? null;
@@ -597,7 +620,10 @@ export class OpenClawChatBridge {
     const payload = await this.client.history(state.sessionKey);
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     state.sessionId = typeof record.sessionId === "string" ? record.sessionId : state.sessionId ?? null;
-    state.reasoningEffort = typeof record.thinkingLevel === "string" ? record.thinkingLevel : state.reasoningEffort ?? null;
+    state.reasoningEffort = normalizeThinkingLevel(
+      typeof record.thinkingLevel === "string" ? record.thinkingLevel : undefined,
+      state.reasoningEffort
+    );
     state.reasoningStream = typeof record.reasoningLevel === "string" ? reasoningStreamEnabled(record.reasoningLevel) : state.reasoningStream ?? null;
     state.fastMode = typeof record.fastMode === "boolean" ? record.fastMode : state.fastMode ?? null;
     state.verboseLevel = typeof record.verboseLevel === "string" ? record.verboseLevel : state.verboseLevel ?? null;
@@ -680,21 +706,51 @@ export class OpenClawChatBridge {
   private handleGatewayChatEvent(payload: unknown): void {
     for (const [deviceId, state] of this.devices) {
       const message = mapGatewayChatEvent(deviceId, payload);
-      if (!message || ("sessionKey" in message && message.sessionKey !== state.sessionKey)) {
-        continue;
+      if (message) {
+        this.handleMappedChatMessage(deviceId, state, message);
       }
+    }
+  }
+
+  private handleMappedChatMessage(deviceId: string, state: DeviceChatState, message: ChatOutboundMessage): boolean {
+    const messageSessionKey = "sessionKey" in message ? message.sessionKey : undefined;
+    const messageRunId = "runId" in message ? message.runId : undefined;
+    const pendingRun = typeof messageRunId === "string" ? state.pendingRuns.get(messageRunId) : undefined;
+    const isSelectedSession = Boolean(messageSessionKey && messageSessionKey === state.sessionKey);
+    const isTrackedPendingRun = Boolean(
+      pendingRun && (!messageSessionKey || pendingRun.sessionKey === messageSessionKey)
+    );
+
+    if (!isSelectedSession && !isTrackedPendingRun) {
+      return false;
+    }
+
+    if (isSelectedSession) {
       if (message.type === "chat.delta" || message.type === "chat.final" || message.type === "chat.error") {
-        this.sendReasoningClear(deviceId, state.sessionKey, "runId" in message ? message.runId : state.runId ?? null);
+        this.sendReasoningClear(deviceId, state.sessionKey, messageRunId ?? state.runId ?? null);
       }
       this.sendChat(deviceId, message);
-      if (message.type === "chat.final" || message.type === "chat.error") {
-        this.settleRun(message);
+    }
+
+    if (message.type === "chat.final" || message.type === "chat.error") {
+      this.settleRun(message);
+      if (messageRunId && state.runId === messageRunId) {
         state.runId = null;
+      }
+      if (messageRunId && pendingRun) {
+        this.sendReplyAvailable(deviceId, message, messageSessionKey ?? pendingRun.sessionKey, pendingRun);
+        state.pendingRuns.delete(messageRunId);
+      }
+      if (isSelectedSession) {
         this.sendState(deviceId, message.type === "chat.final" ? "OpenClaw finished" : "OpenClaw failed");
-        void this.refreshMetadata(deviceId);
+      }
+      void this.refreshMetadata(deviceId);
+      if (isSelectedSession) {
         void this.sendHistory(deviceId);
       }
     }
+
+    return true;
   }
 
   private handleGatewayReasoningEvent(payload: unknown, eventName?: string): void {
@@ -732,18 +788,7 @@ export class OpenClawChatBridge {
         continue;
       }
       const chatMessage = mapGatewayChatEvent(deviceId, payload);
-      if (chatMessage && (!("sessionKey" in chatMessage) || chatMessage.sessionKey === state.sessionKey)) {
-        if (chatMessage.type === "chat.delta" || chatMessage.type === "chat.final" || chatMessage.type === "chat.error") {
-          this.sendReasoningClear(deviceId, state.sessionKey, "runId" in chatMessage ? chatMessage.runId : state.runId ?? null);
-        }
-        this.sendChat(deviceId, chatMessage);
-        if (chatMessage.type === "chat.final" || chatMessage.type === "chat.error") {
-          this.settleRun(chatMessage);
-          state.runId = null;
-          this.sendState(deviceId, chatMessage.type === "chat.final" ? "OpenClaw finished" : "OpenClaw failed");
-          void this.refreshMetadata(deviceId);
-          void this.sendHistory(deviceId);
-        }
+      if (chatMessage && this.handleMappedChatMessage(deviceId, state, chatMessage)) {
         continue;
       }
       const toolEvent = normalizeGatewayToolEvent(deviceId, state.sessionKey, payload);
@@ -891,6 +936,8 @@ export class OpenClawChatBridge {
 
   private async fallbackSend(message: ChatSendMessage, runId: string, taskKind: "general" | "phone" = "general"): Promise<void> {
     const state = this.stateFor(message.deviceId);
+    state.runId = runId;
+    this.trackPendingRun(state, runId, state.sessionKey, state.sessionId ?? null);
     this.sendChat(message.deviceId, {
       type: "chat.history",
       deviceId: message.deviceId,
@@ -916,19 +963,69 @@ export class OpenClawChatBridge {
         reasoningEffort: undefined
       };
       const result = await this.dispatcher.handleUserRequest(legacyRequest, { taskKind });
-      this.sendChat(message.deviceId, {
+      const finalMessage: ChatFinalMessage = {
         type: "chat.final",
         deviceId: message.deviceId,
         sessionKey: state.sessionKey,
         runId,
         text: result.finalMessage ?? "OpenClaw task completed."
-      });
+      };
+      this.sendChat(message.deviceId, finalMessage);
+      this.sendReplyAvailable(message.deviceId, finalMessage, state.sessionKey, state.pendingRuns.get(runId));
     } catch (error) {
-      this.sendChatError(message.deviceId, state.sessionKey, error);
+      const errorMessage: ChatErrorMessage = {
+        type: "chat.error",
+        deviceId: message.deviceId,
+        sessionKey: state.sessionKey,
+        runId,
+        message: error instanceof Error ? error.message : String(error)
+      };
+      this.sendChat(message.deviceId, errorMessage);
+      this.sendReplyAvailable(message.deviceId, errorMessage, state.sessionKey, state.pendingRuns.get(runId));
     } finally {
       state.runId = null;
+      state.pendingRuns.delete(runId);
       this.sendState(message.deviceId, "OpenClaw finished");
     }
+  }
+
+  private trackPendingRun(
+    state: DeviceChatState,
+    runId: string,
+    sessionKey: string,
+    sessionId?: string | null
+  ): void {
+    state.pendingRuns.set(runId, {
+      sessionKey,
+      sessionId: sessionId ?? null,
+      startedAt: Date.now()
+    });
+  }
+
+  private sendReplyAvailable(
+    deviceId: string,
+    message: ChatFinalMessage | ChatErrorMessage,
+    sessionKey: string,
+    pendingRun?: PendingChatRun
+  ): void {
+    const runId = message.runId;
+    if (!runId) {
+      return;
+    }
+    const state = this.stateFor(deviceId);
+    const session = state.sessionSummaries.get(sessionKey);
+    const reply: ChatReplyAvailableMessage = {
+      type: "chat.reply_available",
+      deviceId,
+      sessionKey,
+      runId,
+      status: message.type === "chat.final" ? "completed" : "failed",
+      textPreview: previewText(message.type === "chat.final" ? message.text : message.message),
+      sessionId: session?.sessionId ?? pendingRun?.sessionId ?? null,
+      sessionLabel: session?.label ?? null,
+      sessionDisplayName: session?.displayName ?? null
+    };
+    this.sendChat(deviceId, reply);
   }
 }
 
@@ -962,6 +1059,28 @@ function numberedLabel(baseLabel: string, attempt: number): string {
 function isDuplicateSessionLabelError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /label|name|display/i.test(message) && /already|duplicate|exists|unique|used/i.test(message);
+}
+
+function previewText(text: string): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.length <= 180 ? normalized : `${normalized.slice(0, 177).trimEnd()}...`;
+}
+
+const ALLOWED_THINKING_LEVELS = new Set(["low", "medium", "high", "xhigh"]);
+
+function normalizeThinkingLevel(incoming?: string | null, current?: string | null): string {
+  const normalizedIncoming = incoming?.trim().toLowerCase();
+  if (normalizedIncoming && ALLOWED_THINKING_LEVELS.has(normalizedIncoming)) {
+    return normalizedIncoming;
+  }
+  const normalizedCurrent = current?.trim().toLowerCase();
+  if (normalizedCurrent && ALLOWED_THINKING_LEVELS.has(normalizedCurrent)) {
+    return normalizedCurrent;
+  }
+  return "medium";
 }
 
 function reasoningStreamEnabled(level: string | null | undefined): boolean | null {

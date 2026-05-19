@@ -234,6 +234,23 @@ Reasoning stream deltas are temporary UI blocks. Android renders them while a ru
 }
 ```
 
+When a user-initiated run reaches a terminal reply, the bridge also emits a per-session unread signal. Android uses this for native notification-tray entries, the floating bubble unread badge, and badges in the previous-chats picker. This message is sent even if the user has switched away from the session, so `chat.final`/`chat.error` timeline delivery can remain scoped to the selected session.
+
+```json
+{
+  "type": "chat.reply_available",
+  "deviceId": "openclaw-agent",
+  "sessionKey": "agent:main:explicit:open-claw-agent",
+  "runId": "run_123",
+  "status": "completed",
+  "textPreview": "Done.",
+  "sessionId": "session_abc",
+  "sessionDisplayName": "Trip planning"
+}
+```
+
+Android treats unread state as local and per session. Opening the modal while that `sessionKey` is selected, selecting the session from previous chats, or tapping that session's native notification marks only that session as read and cancels its tray notification. Unread replies for other sessions remain until those sessions are opened.
+
 ```json
 {
   "type": "chat.tool_event",

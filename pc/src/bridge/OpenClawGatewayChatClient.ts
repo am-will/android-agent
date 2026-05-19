@@ -36,13 +36,12 @@ export type GatewayEventHandler = (event: GatewayEvent) => void;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const FALLBACK_REASONING_OPTIONS: ChatReasoningOption[] = [
-  { id: "off", label: "off" },
-  { id: "minimal", label: "minimal" },
   { id: "low", label: "low" },
   { id: "medium", label: "medium" },
   { id: "high", label: "high" },
   { id: "xhigh", label: "xhigh" }
 ];
+const ALLOWED_REASONING_OPTION_IDS = new Set(FALLBACK_REASONING_OPTIONS.map((option) => option.id));
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
@@ -61,6 +60,15 @@ function numberField(record: Record<string, unknown> | undefined, key: string): 
 function booleanField(record: Record<string, unknown> | undefined, key: string): boolean | null {
   const value = record?.[key];
   return typeof value === "boolean" ? value : null;
+}
+
+function roleField(record: Record<string, unknown> | undefined): string | undefined {
+  const role = stringField(record, "role") ?? stringField(record, "speaker") ?? stringField(record, "author");
+  if (role) {
+    return role.toLowerCase();
+  }
+  const type = stringField(record, "type")?.toLowerCase();
+  return type === "user" || type === "assistant" || type === "system" ? type : undefined;
 }
 
 export function extractGatewayText(value: unknown): string {
@@ -90,7 +98,8 @@ export function normalizeHistoryMessage(value: unknown): ChatHistoryMessage | un
     return undefined;
   }
   const role = stringField(record, "role") ?? "assistant";
-  const text = sanitizeHistoryText(role, extractGatewayText(record.content ?? record.text ?? record.message));
+  const rawText = extractGatewayHistoryText(record.content ?? record.text ?? record.message, role);
+  const text = sanitizeHistoryText(role, rawText);
   if (!text.trim()) {
     return undefined;
   }
@@ -103,16 +112,82 @@ export function normalizeHistoryMessage(value: unknown): ChatHistoryMessage | un
   };
 }
 
+function extractGatewayHistoryText(value: unknown, role: string): string {
+  const roleText = extractRoleTaggedGatewayText(value, role.toLowerCase());
+  return roleText.trim() ? roleText : extractGatewayText(value);
+}
+
+function extractRoleTaggedGatewayText(value: unknown, role: string): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractRoleTaggedGatewayText(item, role))
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return "";
+  }
+
+  const itemRole = roleField(record);
+  if (itemRole) {
+    if (itemRole !== role) {
+      return "";
+    }
+    return extractGatewayText(record.content ?? record.text ?? record.message ?? record.output ?? record.result);
+  }
+
+  const explicitRoleValue = record[role];
+  if (explicitRoleValue !== undefined) {
+    return extractGatewayText(explicitRoleValue);
+  }
+
+  for (const key of ["content", "message", "messages", "items", "parts"]) {
+    const nestedText = extractRoleTaggedGatewayText(record[key], role);
+    if (nestedText.trim()) {
+      return nestedText;
+    }
+  }
+
+  return "";
+}
+
 function sanitizeHistoryText(role: string, text: string): string {
   if (role !== "user") {
     return text;
   }
-  const marker = "User request:";
-  const index = text.lastIndexOf(marker);
-  if (index === -1) {
-    return text;
+  const queryStart = text.lastIndexOf("<user_query>");
+  if (queryStart !== -1) {
+    const queryText = text.slice(queryStart + "<user_query>".length);
+    const queryEnd = queryText.indexOf("</user_query>");
+    return (queryEnd === -1 ? queryText : queryText.slice(0, queryEnd)).trim();
   }
-  return text.slice(index + marker.length).trim();
+
+  for (const marker of ["User request:", "User message:", "User prompt:", "User input:"]) {
+    const index = text.lastIndexOf(marker);
+    if (index !== -1) {
+      return stripDisplayTimestampPrefix(text.slice(index + marker.length));
+    }
+  }
+
+  const genericUserIndex = Math.max(text.lastIndexOf("\nUser:"), text.lastIndexOf("\nuser:"));
+  if (genericUserIndex !== -1) {
+    const prefix = text.slice(0, genericUserIndex);
+    if (/(^|\n)\s*(system|developer|context|instructions|system message):/i.test(prefix)) {
+      return stripDisplayTimestampPrefix(text.slice(genericUserIndex + "\nUser:".length));
+    }
+  }
+
+  const systemStatusWrapper = text.match(/^\s*System:\s*\[[^\]]+\][\s\S]*?\n{2,}\s*([\s\S]+)$/i);
+  if (systemStatusWrapper?.[1]?.trim()) {
+    return stripDisplayTimestampPrefix(systemStatusWrapper[1]);
+  }
+  return text;
+}
+
+function stripDisplayTimestampPrefix(text: string): string {
+  return text.replace(/^\s*\[[^\]]+\]\s*/, "").trim();
 }
 
 export function normalizeModels(value: unknown): ChatModelOption[] {
@@ -151,7 +226,12 @@ export function normalizeReasoningOptions(value: unknown): ChatReasoningOption[]
       return undefined;
     }
     return { id, label: stringField(record, "label") ?? id };
-  }).filter((option): option is ChatReasoningOption => Boolean(option));
+  }).filter((option): option is ChatReasoningOption => {
+    if (!option) {
+      return false;
+    }
+    return ALLOWED_REASONING_OPTION_IDS.has(option.id);
+  });
   return normalized.length > 0 ? normalized : FALLBACK_REASONING_OPTIONS;
 }
 

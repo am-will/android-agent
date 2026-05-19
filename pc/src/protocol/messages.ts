@@ -415,6 +415,18 @@ export interface ChatErrorMessage {
   message: string;
 }
 
+export interface ChatReplyAvailableMessage {
+  type: "chat.reply_available";
+  deviceId: string;
+  sessionKey: string;
+  runId: string;
+  status: "completed" | "failed";
+  textPreview?: string | null;
+  sessionId?: string | null;
+  sessionLabel?: string | null;
+  sessionDisplayName?: string | null;
+}
+
 export interface ChatToolEventMessage {
   type: "chat.tool_event";
   deviceId: string;
@@ -474,6 +486,7 @@ export type ChatOutboundMessage =
   | ChatReasoningClearMessage
   | ChatFinalMessage
   | ChatErrorMessage
+  | ChatReplyAvailableMessage
   | ChatToolEventMessage
   | ChatModelsMessage
   | ChatCommandsMessage

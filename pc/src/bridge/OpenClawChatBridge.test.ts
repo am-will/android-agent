@@ -214,6 +214,65 @@ test("new chats use uuid labels until first message display name is set", async 
   ]);
 });
 
+test("completed background session runs emit reply notifications without switching timeline", async () => {
+  const { bridge, chatMessages, client } = createHarness();
+
+  await bridge.send({
+    type: "chat.send",
+    deviceId: "pixel",
+    text: "Work on the current session"
+  });
+  const original = client.sent[0]!;
+  await bridge.selectSession({
+    type: "chat.select_session",
+    deviceId: "pixel",
+    sessionKey: "agent:main:explicit:other"
+  });
+
+  const beforeFinal = chatMessages.length;
+  client.emit({
+    event: "chat",
+    payload: {
+      sessionKey: original.sessionKey,
+      runId: "run_1",
+      state: "final",
+      message: "Background answer"
+    }
+  });
+
+  const emitted = chatMessages.slice(beforeFinal);
+  assert.equal(emitted.some((message) => message.type === "chat.final"), false);
+  const reply = emitted.find((message) => message.type === "chat.reply_available");
+  assert.ok(reply);
+  assert.equal(reply.sessionKey, original.sessionKey);
+  assert.equal(reply.runId, "run_1");
+  assert.equal(reply.status, "completed");
+  assert.equal(reply.textPreview, "Background answer");
+});
+
+test("reasoning changes do not append status messages and invalid levels keep last known value", async () => {
+  const { bridge, chatMessages, client } = createHarness();
+
+  await bridge.setReasoning({
+    type: "chat.set_reasoning",
+    deviceId: "pixel",
+    reasoningEffort: "high"
+  });
+  await bridge.setReasoning({
+    type: "chat.set_reasoning",
+    deviceId: "pixel",
+    reasoningEffort: "off"
+  });
+  await bridge.setModel({
+    type: "chat.set_model",
+    deviceId: "pixel",
+    model: "gpt-5.5"
+  });
+
+  assert.deepEqual(client.sent.map((entry) => entry.message), ["/think high", "/think high", "/model gpt-5.5"]);
+  assert.equal(chatMessages.filter((message) => message.type === "chat.message").length, 0);
+});
+
 test("realtime steer and stop are visible user messages on the active chat", async () => {
   const { bridge, chatMessages, client } = createHarness();
   const request = bridge.handleRealtimeRequest({

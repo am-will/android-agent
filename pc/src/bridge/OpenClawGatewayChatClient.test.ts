@@ -48,6 +48,57 @@ test("chatMessagesFromHistory projects Gateway history for Android", () => {
   ]);
 });
 
+test("chatMessagesFromHistory prefers role-tagged user content", () => {
+  const messages = chatMessagesFromHistory({
+    messages: [
+      {
+        role: "user",
+        content: [
+          { role: "system", content: "Previous system reminder" },
+          { role: "user", content: "Check the screenshot" }
+        ],
+        __openclaw: { id: "u1" }
+      }
+    ]
+  });
+
+  assert.deepEqual(messages, [
+    { id: "u1", role: "user", text: "Check the screenshot", timestamp: null }
+  ]);
+});
+
+test("chatMessagesFromHistory strips system prefaces from wrapped user messages", () => {
+  const messages = chatMessagesFromHistory({
+    messages: [
+      {
+        role: "user",
+        content: "System message:\nKeep responses concise.\n\nUser message:\nWhy can't it reach the same port?",
+        __openclaw: { id: "u1" }
+      }
+    ]
+  });
+
+  assert.deepEqual(messages, [
+    { id: "u1", role: "user", text: "Why can't it reach the same port?", timestamp: null }
+  ]);
+});
+
+test("chatMessagesFromHistory strips timestamped system status wrappers", () => {
+  const messages = chatMessagesFromHistory({
+    messages: [
+      {
+        role: "user",
+        content: "System: [2026-05-18 20:54:50 MDT] Fast mode disabled.\n\n\n[Tue 2026-05-19 00:00 MDT] test",
+        __openclaw: { id: "u1" }
+      }
+    ]
+  });
+
+  assert.deepEqual(messages, [
+    { id: "u1", role: "user", text: "test", timestamp: null }
+  ]);
+});
+
 test("mapGatewayChatEvent maps delta, final, and error states", () => {
   assert.deepEqual(
     mapGatewayChatEvent("phone", {
