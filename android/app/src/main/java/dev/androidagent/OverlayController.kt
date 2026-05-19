@@ -703,11 +703,7 @@ class OverlayController(
             setPadding(0, 0, 0, 0)
             setOnKeyListener { _, keyCode, event ->
                 if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                    if (anchoredPicker?.isShowing == true) {
-                        anchoredPicker?.dismiss()
-                    } else {
-                        dismissPanel()
-                    }
+                    handlePanelBackPressed()
                     true
                 } else {
                     false
@@ -754,7 +750,7 @@ class OverlayController(
             override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
                 if (isModalCloseHotZone(event)) {
                     if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
-                        dismissPanel(force = true)
+                        handlePanelBackPressed()
                     }
                     return true
                 }
@@ -763,11 +759,7 @@ class OverlayController(
 
             override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
                 if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                    if (anchoredPicker?.isShowing == true) {
-                        anchoredPicker?.dismiss()
-                    } else {
-                        dismissPanel()
-                    }
+                    handlePanelBackPressed()
                     return true
                 }
                 return super.dispatchKeyEventPreIme(event)
@@ -873,7 +865,7 @@ class OverlayController(
             drawableRes = R.drawable.ic_close,
             contentDescription = "Close chat",
             compact = true
-        ) { dismissPanel() }
+        ) { handlePanelBackPressed() }
 
         val handleArea = if (presentation == PanelPresentation.Popup) {
             val handle = View(context).apply {
@@ -1007,6 +999,14 @@ class OverlayController(
         panelScrimView?.animate()?.cancel()
         finalizePanelDismiss()
         onStartVoice()
+    }
+
+    private fun handlePanelBackPressed() {
+        if (anchoredPicker?.isShowing == true) {
+            anchoredPicker?.dismiss()
+        } else {
+            dismissPanel()
+        }
     }
 
     private fun isModalCloseHotZone(event: android.view.MotionEvent): Boolean {
