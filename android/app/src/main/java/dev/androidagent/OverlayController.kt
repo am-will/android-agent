@@ -933,8 +933,8 @@ class OverlayController(
             headerSessionAnchor = this
         }
 
-        val headerSize = dp(DesignTokens.Sizes.compact)
-        val headerGap = dp(3)
+        val headerSize = (dp(DesignTokens.Sizes.compact) * 1.1f).roundToInt()
+        val headerGap = (dp(3) * 1.1f).roundToInt()
         val actions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
