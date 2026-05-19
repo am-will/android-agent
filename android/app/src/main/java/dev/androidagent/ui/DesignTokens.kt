@@ -164,7 +164,7 @@ object DesignTokens {
         dangerSoft = 0x24F87171,
         bubbleUser = 0xFF3766FF.toInt(),
         bubbleUserInk = 0xFFFFFFFF.toInt(),
-        bubbleAssistant = 0xFF1B2336.toInt(),
+        bubbleAssistant = 0xFF242E42.toInt(),
         bubbleAssistantInk = 0xFFF1F5F9.toInt(),
         bubbleSystem = 0x33F87171,
         bubbleSystemInk = 0xFFFCA5A5.toInt(),
