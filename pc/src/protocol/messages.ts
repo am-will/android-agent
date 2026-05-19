@@ -21,6 +21,9 @@ export const PHONE_COMMANDS = [
 export const phoneCommandSchema = z.enum(PHONE_COMMANDS);
 export type PhoneCommand = z.infer<typeof phoneCommandSchema>;
 
+export const AGENT_MODEL_IDS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"] as const;
+export const REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+
 export const registerMessageSchema = z.object({
   type: z.literal("register"),
   deviceId: z.string().min(1),
@@ -57,8 +60,8 @@ export const userRequestMessageSchema = z.object({
   inputType: z.literal("text"),
   text: z.string().min(1),
   systemPrompt: z.string().optional(),
-  model: z.enum(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]).optional(),
-  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
+  model: z.enum(AGENT_MODEL_IDS).optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional()
 });
 
 export const phoneLocationSchema = z.object({
@@ -74,8 +77,8 @@ export const realtimeStartMessageSchema = z.object({
   deviceId: z.string().min(1),
   sdp: z.string().min(1),
   systemPrompt: z.string().optional(),
-  model: z.enum(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]).optional(),
-  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+  model: z.enum(AGENT_MODEL_IDS).optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
   openAiApiKey: z.string().optional(),
   location: phoneLocationSchema.optional()
 });
