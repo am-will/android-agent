@@ -73,6 +73,7 @@ class MainActivity : ComponentActivity() {
         buildUi()
         maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
+        AvatarLibrary.scanOnBoot(applicationContext, AgentConfigStore.load(this).hostUrl)
     }
 
     override fun onStart() {

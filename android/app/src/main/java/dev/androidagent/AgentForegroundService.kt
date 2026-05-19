@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.app.ServiceCompat
 import dev.androidagent.accessibility.AccessibilityCommandExecutor
+import dev.androidagent.avatar.AvatarLibrary
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatStateReducer
 import dev.androidagent.chat.ChatTimelineItem
@@ -54,6 +55,7 @@ class AgentForegroundService : Service() {
         broadcastRunningState()
         createChannel()
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), foregroundServiceType(includeMicrophone = false))
+        AvatarLibrary.scanOnBoot(applicationContext, AgentConfigStore.load(this).hostUrl)
         voiceTranscriptionManager = VoiceTranscriptionManager(onStateChanged = ::handleTranscriptionState)
         overlayController = OverlayController(
             context = this,
