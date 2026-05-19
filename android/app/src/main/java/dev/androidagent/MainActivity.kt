@@ -164,6 +164,13 @@ class MainActivity : ComponentActivity() {
         }, stackedParams())
 
         root.addView(card(tokens).apply {
+            addView(sectionHeader("Appearance", "Choose how the chat modal opens and closes when you tap the bubble.", tokens))
+            addView(actionButton("Open Appearance", ButtonTone.Secondary, tokens) {
+                showAppearanceMenu()
+            }, stackedParams(DesignTokens.Spacing.lg))
+        }, stackedParams())
+
+        root.addView(card(tokens).apply {
             addView(sectionHeader("Agent Controls", "Start the bubble after pairing and granting permissions.", tokens))
             addView(actionButton("Start Agent Bubble", ButtonTone.Primary, tokens) {
                 ContextCompat.startForegroundService(
@@ -270,6 +277,70 @@ class MainActivity : ComponentActivity() {
                 AgentConfigStore.save(this, saved)
                 systemPromptText = saved.systemPrompt
                 refreshStatus()
+            }
+            .create()
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(
+                Drawables.glassSurface(this@MainActivity, tokens, DesignTokens.Radius.xl)
+            )
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(tokens.accent)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(tokens.secondaryText)
+        }
+        dialog.show()
+    }
+
+    private fun showAppearanceMenu() {
+        val tokens = tokens()
+        val current = AppearancePrefsStore.load(this)
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(DesignTokens.Spacing.xl), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.xl), 0)
+        }
+
+        val animationOptions = listOf(
+            PanelAnimationStyle.Circular to "Circular reveal (from bubble)",
+            PanelAnimationStyle.Slide to "Slide up from bottom"
+        )
+        val scrimOptions = listOf(
+            PanelScrimStyle.Ripple to "Radiate from bubble",
+            PanelScrimStyle.Fade to "Fade in"
+        )
+
+        content.addView(fieldLabel("Panel animation", tokens))
+        content.addView(body("How the chat modal appears when you tap the bubble.", tokens).apply {
+            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
+        }, stackedParams(DesignTokens.Spacing.xs))
+        val animationSpinner = styledSpinner(
+            animationOptions.map { it.second },
+            animationOptions.indexOfFirst { it.first == current.panelAnimation }.coerceAtLeast(0),
+            tokens
+        )
+        content.addView(animationSpinner, stackedParams(DesignTokens.Spacing.sm))
+
+        content.addView(fieldLabel("Backdrop", tokens), stackedParams(DesignTokens.Spacing.lg))
+        content.addView(body("How the dim background appears behind the modal.", tokens).apply {
+            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
+        }, stackedParams(DesignTokens.Spacing.xs))
+        val scrimSpinner = styledSpinner(
+            scrimOptions.map { it.second },
+            scrimOptions.indexOfFirst { it.first == current.scrimAnimation }.coerceAtLeast(0),
+            tokens
+        )
+        content.addView(scrimSpinner, stackedParams(DesignTokens.Spacing.sm))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Appearance")
+            .setView(ScrollView(this).apply {
+                addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            })
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val saved = AppearancePrefs(
+                    panelAnimation = animationOptions.getOrElse(animationSpinner.selectedItemPosition) { animationOptions.first() }.first,
+                    scrimAnimation = scrimOptions.getOrElse(scrimSpinner.selectedItemPosition) { scrimOptions.first() }.first
+                )
+                AppearancePrefsStore.save(this, saved)
             }
             .create()
         dialog.setOnShowListener {
