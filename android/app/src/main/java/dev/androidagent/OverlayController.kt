@@ -3062,7 +3062,7 @@ class OverlayController(
         private const val MODAL_CLOSE_HOT_ZONE_HEIGHT_DP = 88
         private const val KEYBOARD_HEIGHT_ESTIMATE_FRACTION = 0.485f
         private const val KEYBOARD_COMPOSER_GAP_DP = 4
-        const val MIN_BUBBLE_SIZE_DP = 56
+        const val MIN_BUBBLE_SIZE_DP = 40
         const val DEFAULT_BUBBLE_SIZE_DP = 88
         const val MAX_BUBBLE_SIZE_DP = 132
     }

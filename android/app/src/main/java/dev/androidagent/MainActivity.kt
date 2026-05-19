@@ -55,6 +55,8 @@ class MainActivity : ComponentActivity() {
     private val avatarRefreshExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "AvatarRefresh").apply { isDaemon = true }
     }
+    private var agentToggleButton: TextView? = null
+    private var agentToggleLastIsRunning: Boolean? = null
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AgentForegroundService.ACTION_STATE_CHANGED) {
@@ -183,17 +185,10 @@ class MainActivity : ComponentActivity() {
 
         root.addView(card(tokens).apply {
             addView(sectionHeader("Agent Controls", "Start the bubble after pairing and granting permissions.", tokens))
-            addView(actionButton("Start Agent Bubble", ButtonTone.Primary, tokens) {
-                ContextCompat.startForegroundService(
-                    this@MainActivity,
-                    Intent(this@MainActivity, AgentForegroundService::class.java)
-                )
-                refreshStatusSoon()
-            }, stackedParams(DesignTokens.Spacing.lg))
-            addView(actionButton("Stop Agent Bubble", ButtonTone.Secondary, tokens) {
-                stopService(Intent(this@MainActivity, AgentForegroundService::class.java))
-                refreshStatusSoon()
-            }, stackedParams(DesignTokens.Spacing.sm + 2))
+            val toggle = buildAgentToggleButton(tokens)
+            agentToggleButton = toggle
+            agentToggleLastIsRunning = null
+            addView(toggle, stackedParams(DesignTokens.Spacing.lg))
             addView(actionButton("Grant Overlay Permission", ButtonTone.Secondary, tokens) {
                 openOverlaySettings()
             }, stackedParams(DesignTokens.Spacing.sm + 2))
@@ -628,6 +623,8 @@ class MainActivity : ComponentActivity() {
         updateChip("accessibility", if (accessibility) "Enabled" else "Disabled", if (accessibility) tokens.success else tokens.warning)
         updateChip("service", if (service) "Running" else "Stopped", if (service) tokens.success else tokens.secondaryText)
 
+        agentToggleButton?.let { applyAgentToggleState(it, service, animated = true) }
+
         statusText.text = if (overlay && microphone && accessibility) {
             "Ready. Start the bubble when your Open Claw bridge is listening."
         } else {
@@ -791,6 +788,83 @@ class MainActivity : ComponentActivity() {
             statusChips[key] = chip
             addView(chip)
         }
+    }
+
+    private fun buildAgentToggleButton(tokens: ThemeTokens): TextView {
+        val button = TextView(this).apply {
+            gravity = Gravity.CENTER
+            Typography.applyCallout(this, tokens)
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md + 2), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md + 2))
+            isClickable = true
+            isFocusable = true
+            minHeight = dp(DesignTokens.Sizes.action)
+            setOnClickListener { toggleAgentService() }
+        }
+        applyAgentToggleState(button, AgentForegroundService.isRunning, animated = false)
+        return button
+    }
+
+    private fun toggleAgentService() {
+        val nowRunning = !AgentForegroundService.isRunning
+        if (nowRunning) {
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, AgentForegroundService::class.java)
+            )
+        } else {
+            stopService(Intent(this, AgentForegroundService::class.java))
+        }
+        agentToggleButton?.let { playAgentTogglePressAnimation(it) }
+        refreshStatusSoon()
+    }
+
+    private fun playAgentTogglePressAnimation(view: TextView) {
+        view.animate().cancel()
+        view.scaleX = 1f
+        view.scaleY = 1f
+        view.animate()
+            .scaleX(0.94f).scaleY(0.94f)
+            .setDuration(90L)
+            .withEndAction {
+                view.animate()
+                    .scaleX(1.04f).scaleY(1.04f)
+                    .setDuration(120L)
+                    .withEndAction {
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(120L).start()
+                    }.start()
+            }.start()
+    }
+
+    private fun applyAgentToggleState(button: TextView, isRunning: Boolean, animated: Boolean) {
+        val tokens = tokens()
+        val label = if (isRunning) "Stop Agent Bubble" else "Start Agent Bubble"
+        val newBackground = if (isRunning) {
+            Drawables.accentSoftSurface(this, tokens, DesignTokens.Radius.md)
+        } else {
+            Drawables.accentSurface(this, tokens, DesignTokens.Radius.md)
+        }
+        val newTextColor = if (isRunning) tokens.accent else tokens.accentInk
+        val previous = agentToggleLastIsRunning
+        agentToggleLastIsRunning = isRunning
+        if (!animated || previous == null || previous == isRunning) {
+            button.text = label
+            button.background = newBackground
+            button.setTextColor(newTextColor)
+            button.alpha = 1f
+            return
+        }
+        button.animate().cancel()
+        button.animate()
+            .alpha(0.35f)
+            .setDuration(110L)
+            .withEndAction {
+                button.text = label
+                button.background = newBackground
+                button.setTextColor(newTextColor)
+                button.animate().alpha(1f).setDuration(150L).start()
+            }
+            .start()
     }
 
     private fun actionButton(text: String, tone: ButtonTone, tokens: ThemeTokens, onClick: () -> Unit): TextView {
