@@ -373,6 +373,35 @@ class OverlayController(
         return isOverlayAttached(bubbleView)
     }
 
+    /**
+     * Rebuilds the bubble's inner avatar view in-place so changes from the
+     * Avatar picker take effect immediately, without waiting for the bubble
+     * to be torn down and re-shown.
+     */
+    fun refreshBubbleAvatar() {
+        mainHandler.post {
+            val bubble = bubbleView as? FrameLayout ?: return@post
+            val badge = bubbleUnreadBadgeView
+            bubble.removeAllViews()
+            bubblePetView = null
+            bubble.addView(buildBubbleAvatarView(), FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+            if (badge != null) {
+                bubble.addView(badge, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    dp(20),
+                    Gravity.TOP or Gravity.END
+                ).apply {
+                    topMargin = dp(2)
+                    rightMargin = dp(2)
+                })
+            }
+            renderBubbleUnreadBadge(lastChatState)
+        }
+    }
+
     fun openChatPanel(
         markCurrentSessionViewed: Boolean = true,
         presentation: PanelPresentation = PanelPresentation.Popup

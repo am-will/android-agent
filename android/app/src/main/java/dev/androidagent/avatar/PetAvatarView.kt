@@ -31,6 +31,7 @@ class PetAvatarView @JvmOverloads constructor(
     private var bitmap: Bitmap? = null
     private val srcRect = Rect()
     private val dstRect = RectF()
+    private val rowHasContent = BooleanArray(PetAnimation.ROWS)
 
     private var state: PetAnimation.State = PetAnimation.State.Idle
     private var frameIndex = 0
@@ -56,6 +57,7 @@ class PetAvatarView @JvmOverloads constructor(
             } else {
                 bitmap?.recycle()
                 bitmap = decoded
+                analyzeRowContent(decoded)
                 frameIndex = 0
                 lastFrameNanos = 0L
                 invalidate()
@@ -92,10 +94,13 @@ class PetAvatarView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         val sheet = bitmap ?: return
+        val effectiveRow = effectiveRowFor(state)
+        val mirrorHorizontally = state == PetAnimation.State.RunningLeft &&
+            effectiveRow == PetAnimation.State.RunningRight.row
         val columnsForRow = state.frameCount
         val safeIndex = if (columnsForRow > 0) frameIndex % columnsForRow else 0
         val left = safeIndex * PetAnimation.CELL_WIDTH
-        val top = state.row * PetAnimation.CELL_HEIGHT
+        val top = effectiveRow * PetAnimation.CELL_HEIGHT
         srcRect.set(left, top, left + PetAnimation.CELL_WIDTH, top + PetAnimation.CELL_HEIGHT)
         val viewWidth = width.toFloat()
         val viewHeight = height.toFloat()
@@ -114,7 +119,56 @@ class PetAvatarView @JvmOverloads constructor(
         val dx = (viewWidth - drawWidth) / 2f
         val dy = (viewHeight - drawHeight) / 2f
         dstRect.set(dx, dy, dx + drawWidth, dy + drawHeight)
-        canvas.drawBitmap(sheet, srcRect, dstRect, paint)
+        if (mirrorHorizontally) {
+            val saved = canvas.save()
+            canvas.scale(-1f, 1f, viewWidth / 2f, viewHeight / 2f)
+            canvas.drawBitmap(sheet, srcRect, dstRect, paint)
+            canvas.restoreToCount(saved)
+        } else {
+            canvas.drawBitmap(sheet, srcRect, dstRect, paint)
+        }
+    }
+
+    private fun effectiveRowFor(requested: PetAnimation.State): Int {
+        if (rowHasContent[requested.row]) return requested.row
+        return when (requested) {
+            PetAnimation.State.RunningLeft ->
+                if (rowHasContent[PetAnimation.State.RunningRight.row]) PetAnimation.State.RunningRight.row
+                else if (rowHasContent[PetAnimation.State.Running.row]) PetAnimation.State.Running.row
+                else PetAnimation.State.Idle.row
+            PetAnimation.State.RunningRight ->
+                if (rowHasContent[PetAnimation.State.Running.row]) PetAnimation.State.Running.row
+                else PetAnimation.State.Idle.row
+            else -> PetAnimation.State.Idle.row
+        }
+    }
+
+    private fun analyzeRowContent(sheet: Bitmap) {
+        val width = sheet.width
+        val height = sheet.height
+        for (row in 0 until PetAnimation.ROWS) {
+            val y0 = row * PetAnimation.CELL_HEIGHT
+            val y1 = (y0 + PetAnimation.CELL_HEIGHT).coerceAtMost(height)
+            if (y0 >= y1) {
+                rowHasContent[row] = false
+                continue
+            }
+            var found = false
+            // Stride sample keeps this ~O(width*height/SAMPLE_STRIDE^2) per row.
+            var y = y0
+            outer@ while (y < y1) {
+                var x = 0
+                while (x < width) {
+                    if ((sheet.getPixel(x, y) ushr 24) and 0xFF != 0) {
+                        found = true
+                        break@outer
+                    }
+                    x += SAMPLE_STRIDE
+                }
+                y += SAMPLE_STRIDE
+            }
+            rowHasContent[row] = found
+        }
     }
 
     private fun startAnimating() {
@@ -152,5 +206,6 @@ class PetAvatarView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "PetAvatarView"
+        private const val SAMPLE_STRIDE = 4
     }
 }

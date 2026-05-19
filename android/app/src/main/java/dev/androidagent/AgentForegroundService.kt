@@ -117,6 +117,10 @@ class AgentForegroundService : Service() {
                 }
                 return START_STICKY
             }
+            ACTION_REFRESH_AVATAR -> {
+                overlayController?.refreshBubbleAvatar()
+                return START_STICKY
+            }
         }
         overlayController?.show()
         return START_STICKY
@@ -558,6 +562,7 @@ class AgentForegroundService : Service() {
         private const val ACTION_STOP_TURN = "dev.openclawagent.action.STOP_TURN"
         const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
         private const val ACTION_OPEN_CHAT_SESSION = "dev.openclawagent.action.OPEN_CHAT_SESSION"
+        const val ACTION_REFRESH_AVATAR = "dev.openclawagent.action.REFRESH_AVATAR"
         const val EXTRA_PANEL_PRESENTATION = "panelPresentation"
         const val PANEL_PRESENTATION_POPUP = "popup"
         const val PANEL_PRESENTATION_FULLSCREEN = "fullscreen"

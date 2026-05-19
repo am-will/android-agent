@@ -360,6 +360,13 @@ class MainActivity : ComponentActivity() {
         dialog.show()
     }
 
+    private fun notifyAvatarChanged() {
+        if (!AgentForegroundService.isRunning) return
+        val intent = Intent(this, AgentForegroundService::class.java)
+            .setAction(AgentForegroundService.ACTION_REFRESH_AVATAR)
+        runCatching { ContextCompat.startForegroundService(this, intent) }
+    }
+
     private fun currentAvatarSummary(): String {
         return when (val selection = AvatarConfigStore.load(this)) {
             is AvatarSelection.Lobster -> "Current: Lobster (default)"
@@ -404,6 +411,7 @@ class MainActivity : ComponentActivity() {
                 selected = currentSelection is AvatarSelection.Lobster
             ) {
                 AvatarConfigStore.save(this, AvatarSelection.Lobster)
+                notifyAvatarChanged()
                 onSelected()
                 dialog.dismiss()
             })
@@ -415,6 +423,7 @@ class MainActivity : ComponentActivity() {
                     selected = currentSelection is AvatarSelection.Pet && currentSelection.id == pet.id
                 ) {
                     AvatarConfigStore.save(this, AvatarSelection.Pet(pet.id))
+                    notifyAvatarChanged()
                     onSelected()
                     dialog.dismiss()
                 })
