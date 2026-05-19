@@ -20,8 +20,11 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.Editable
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextWatcher
 import android.text.method.ScrollingMovementMethod
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -41,13 +44,18 @@ import android.widget.ScrollView
 import android.widget.Space
 import android.widget.TextView
 import android.widget.FrameLayout
+import androidx.core.view.isNotEmpty
 import dev.androidagent.chat.ChatModelOption
+import dev.androidagent.chat.ChatSessionRow
 import dev.androidagent.chat.ChatTimelineKind
 import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatTimelineItem
 import dev.androidagent.ui.AnchoredPicker
+import dev.androidagent.ui.ClipboardHelper
 import dev.androidagent.ui.DesignTokens
 import dev.androidagent.ui.Drawables
+import dev.androidagent.ui.MarkdownFencedCodeChunk
+import dev.androidagent.ui.MarkdownFencedCodeParser
 import dev.androidagent.ui.MarkdownRenderer
 import dev.androidagent.ui.StatusUpdateView
 import dev.androidagent.ui.ThemeTokens
@@ -75,13 +83,15 @@ class OverlayController(
     private val onSetChatModel: (String) -> Unit = {},
     private val onSetChatReasoning: (String) -> Unit = {},
     private val onChatControlCommand: (String, JSONObject) -> Unit = { _, _ -> },
-    private val onToggleChatTool: (String) -> Unit = {}
+    private val onToggleChatTool: (String) -> Unit = {},
+    private val onChatSessionViewed: (String) -> Unit = {}
 ) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private val trashShowInterpolator = DecelerateInterpolator()
     private val trashHideInterpolator = AccelerateInterpolator()
     private var bubbleView: View? = null
+    private var bubbleUnreadBadgeView: TextView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
     private var bubblePulseAnimator: AnimatorSet? = null
     private var lastBubbleX: Int? = null
@@ -107,6 +117,7 @@ class OverlayController(
     private var lastVoiceState = VoiceRuntimeState()
     private var voiceSurfaceForceHidden = false
     private var panelDismissAnimating = false
+    private var suppressNextPanelViewedCallback = false
     private var lastChatState = ChatState()
     private var showToolCalls = true
     private var suppressSlashAutocomplete = false
@@ -134,7 +145,8 @@ class OverlayController(
     private var panelHost: FrameLayout? = null
     private var panelContent: LinearLayout? = null
     private var anchoredPicker: AnchoredPicker? = null
-    private var modelTitleSubtext: TextView? = null
+    private var headerSessionAnchor: View? = null
+    private var headerSessionChevron: ImageView? = null
     private var plusButton: ImageButton? = null
 
     private data class SlashToken(val start: Int, val end: Int, val query: String)
@@ -144,15 +156,51 @@ class OverlayController(
             return
         }
         val tokens = tokens()
-        val bubble = ImageButton(context).apply {
-            setImageResource(R.drawable.openclaw_bubble_logo)
-            scaleType = ImageView.ScaleType.FIT_CENTER
+        val badge = TextView(context).apply {
+            visibility = View.GONE
+            gravity = Gravity.CENTER
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFFE53935.toInt())
+            }
+            minWidth = dp(20)
+            minHeight = dp(20)
+            includeFontPadding = false
+            setPadding(dp(4), 0, dp(4), 0)
+        }
+        val bubble = FrameLayout(context).apply {
             background = bubbleBackgroundForVoiceState(lastVoiceState, tokens)
             contentDescription = "Open Claw Agent"
             elevation = dp(DesignTokens.Elevation.mid).toFloat()
-            setPadding(dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.md))
+            isClickable = true
+            isFocusable = true
             setOnClickListener { togglePanel() }
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.openclaw_bubble_logo)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setPadding(
+                    dp(DesignTokens.Spacing.md),
+                    dp(DesignTokens.Spacing.md),
+                    dp(DesignTokens.Spacing.md),
+                    dp(DesignTokens.Spacing.md)
+                )
+            }, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+            addView(badge, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                dp(20),
+                Gravity.TOP or Gravity.END
+            ).apply {
+                topMargin = dp(2)
+                rightMargin = dp(2)
+            })
         }
+        bubbleUnreadBadgeView = badge
         val params = overlayParams(width = dp(88), height = dp(88), focusable = false).apply {
             gravity = Gravity.TOP or Gravity.START
             x = lastBubbleX ?: dp(16)
@@ -179,6 +227,7 @@ class OverlayController(
         bubbleView = bubble
         bubbleParams = params
         applyBubbleVoiceIndicator(lastVoiceState)
+        renderBubbleUnreadBadge(lastChatState)
     }
 
     fun hide() {
@@ -191,6 +240,7 @@ class OverlayController(
         dismissPanel()
         dismissConfirmation()
         bubbleView = null
+        bubbleUnreadBadgeView = null
         bubbleParams = null
     }
 
@@ -217,6 +267,7 @@ class OverlayController(
             detachOverlayView(it)
         }
         bubbleView = null
+        bubbleUnreadBadgeView = null
         bubbleParams = null
         removeTrashTarget()
     }
@@ -266,8 +317,33 @@ class OverlayController(
         lastChatState = state
         mainHandler.post {
             renderChatState(state)
+            renderBubbleUnreadBadge(state)
             state.status?.let { setStatus(it) }
             state.error?.let { setStatus(it) }
+            if (panelView != null) {
+                notifyCurrentChatSessionViewed()
+            }
+        }
+    }
+
+    fun isViewingChatSession(sessionKey: String?): Boolean {
+        val key = sessionKey?.takeIf { it.isNotBlank() } ?: return false
+        return panelView != null && lastChatState.sessionKey == key
+    }
+
+    fun openChatPanel(markCurrentSessionViewed: Boolean = true) {
+        mainHandler.post {
+            if (panelView == null) {
+                if (bubbleView == null) {
+                    show()
+                }
+                suppressNextPanelViewedCallback = !markCurrentSessionViewed
+                togglePanel()
+            } else {
+                if (markCurrentSessionViewed) {
+                    notifyCurrentChatSessionViewed()
+                }
+            }
         }
     }
 
@@ -407,7 +483,10 @@ class OverlayController(
 
     fun openPanel() {
         mainHandler.post {
-            if (panelView != null) return@post
+            if (panelView != null) {
+                notifyCurrentChatSessionViewed()
+                return@post
+            }
             togglePanel()
         }
     }
@@ -589,6 +668,11 @@ class OverlayController(
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
         renderTranscriptionState(lastTranscriptionState)
+        if (suppressNextPanelViewedCallback) {
+            suppressNextPanelViewedCallback = false
+        } else {
+            notifyCurrentChatSessionViewed()
+        }
     }
 
     private fun buildModalHeader(tokens: ThemeTokens): View {
@@ -630,31 +714,44 @@ class OverlayController(
             attachSwipeToDismiss(this)
         }
 
-        val titleText = TextView(context).apply {
-            text = "OpenClaw"
-            Typography.applyCallout(this, tokens)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            isSingleLine = true
-            ellipsize = android.text.TextUtils.TruncateAt.END
+        val brandedTitle = SpannableString("OpenClaw").apply {
+            setSpan(ForegroundColorSpan(tokens.danger), 4, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        val subtitleText = TextView(context).apply {
-            text = lastChatState.selectedModel?.let { modelDisplayLabel(it) } ?: "Ready"
-            textSize = 10f
-            setTextColor(tokens.tertiaryText)
-            includeFontPadding = false
-            isSingleLine = true
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            modelTitleSubtext = this
+        val titleChevron = ImageView(context).apply {
+            setImageResource(R.drawable.ic_chevron_down)
+            setColorFilter(tokens.secondaryText)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            headerSessionChevron = this
         }
-
         val titleStack = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(titleText)
-            addView(subtitleText, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(1) })
+            isClickable = true
+            isFocusable = true
+            background = Drawables.pillSurface(context, tokens)
+            backgroundTintList = null
+            contentDescription = "Show previous OpenClaw chats"
+            setPadding(dp(DesignTokens.Spacing.sm), dp(3), dp(DesignTokens.Spacing.sm), dp(3))
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.openclaw_bubble_logo)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+            }, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                rightMargin = dp(DesignTokens.Spacing.xs)
+            })
+            addView(TextView(context).apply {
+                text = brandedTitle
+                textSize = 18f
+                setTextColor(tokens.primaryText)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                includeFontPadding = false
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(titleChevron, LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                leftMargin = dp(DesignTokens.Spacing.xs)
+            })
+            setOnClickListener { showHeaderSessionsMenu() }
+            headerSessionAnchor = this
         }
 
         val headerSize = dp(DesignTokens.Sizes.compact)
@@ -730,6 +827,9 @@ class OverlayController(
     }
 
     private fun isModalCloseHotZone(event: android.view.MotionEvent): Boolean {
+        if (anchoredPicker?.isShowing == true) {
+            return false
+        }
         if (event.actionMasked != android.view.MotionEvent.ACTION_DOWN &&
             event.actionMasked != android.view.MotionEvent.ACTION_UP
         ) {
@@ -739,11 +839,6 @@ class OverlayController(
         val closeZoneWidth = dp(MODAL_CLOSE_HOT_ZONE_WIDTH_DP)
         val closeZoneHeight = dp(MODAL_CLOSE_HOT_ZONE_HEIGHT_DP)
         return event.x >= host.width - closeZoneWidth && event.y <= closeZoneHeight
-    }
-
-    private fun modelDisplayLabel(id: String?): String {
-        if (id.isNullOrBlank()) return "Ready"
-        return lastChatState.models.firstOrNull { it.id == id }?.label ?: id
     }
 
     private fun buildComposerInput(tokens: ThemeTokens): EditText {
@@ -975,15 +1070,21 @@ class OverlayController(
         anchor: View,
         title: String,
         sections: List<AnchoredPicker.Section>,
-        toggleSameAnchor: Boolean = true
+        toggleSameAnchor: Boolean = true,
+        replaceShowing: Boolean = false,
+        onDismiss: (() -> Unit)? = null
     ) {
         val host = panelHost ?: return
         val picker = ensurePicker()
+        if (replaceShowing && picker.isShowingFor(anchor)) {
+            picker.update(title, sections)
+            return
+        }
         if (toggleSameAnchor && picker.isShowingFor(anchor)) {
             picker.dismiss()
             return
         }
-        picker.show(host, anchor, title, sections)
+        picker.show(host, anchor, title, sections, onDismiss = onDismiss)
     }
 
     private fun showModelChoices() {
@@ -1105,6 +1206,49 @@ class OverlayController(
         setStatus("Reasoning: ${next.label}")
     }
 
+    private fun showHeaderSessionsMenu() {
+        val anchor = headerSessionAnchor ?: panelHost ?: return
+        val rows = sessionPickerRows()
+        if (rows.isEmpty()) {
+            animateHeaderSessionChevron(expanded = false)
+            setStatus("No previous chats yet.")
+            return
+        }
+
+        if (anchoredPicker?.isShowingFor(anchor) != true) {
+            animateHeaderSessionChevron(expanded = true)
+        }
+        showAnchoredPicker(
+            anchor,
+            "Previous chats",
+            listOf(AnchoredPicker.Section(null, rows)),
+            toggleSameAnchor = true,
+            onDismiss = { animateHeaderSessionChevron(expanded = false) }
+        )
+    }
+
+    private fun animateHeaderSessionChevron(expanded: Boolean) {
+        headerSessionChevron?.animate()
+            ?.rotation(if (expanded) 180f else 0f)
+            ?.setDuration(160L)
+            ?.setInterpolator(DecelerateInterpolator())
+            ?.start()
+    }
+
+    private fun sessionPickerRows(limit: Int = 30): List<AnchoredPicker.Row> {
+        return lastChatState.sessions.take(limit).map { session ->
+            val label = sessionLabel(session)
+            AnchoredPicker.Row(
+                label = label.take(40),
+                sublabel = session.model,
+                iconRes = R.drawable.ic_notification_bubble,
+                badgeCount = lastChatState.unreadCountForSession(session.key),
+                selected = session.key == lastChatState.sessionKey,
+                onSelect = { onSelectChatSession(session.key) }
+            )
+        }
+    }
+
     private fun showPlusMenu(replace: Boolean = false) {
         val plusAnchor: View = plusButton ?: panelContent ?: panelHost ?: return
 
@@ -1122,11 +1266,12 @@ class OverlayController(
             }
         ))
         if (sessions.isNotEmpty()) {
-            val sessionCount = sessions.size.coerceAtMost(20)
+            val sessionCount = sessions.size.coerceAtMost(30)
             sessionRows.add(AnchoredPicker.Row(
                 label = "Previous chats",
                 sublabel = "Last $sessionCount",
-                iconRes = R.drawable.ic_session,
+                iconRes = R.drawable.ic_notification_bubble,
+                badgeCount = lastChatState.totalUnreadReplies,
                 dismissOnSelect = false,
                 onSelect = { showSessionsMenu() }
             ))
@@ -1240,7 +1385,13 @@ class OverlayController(
         sections.add(AnchoredPicker.Section("Run mode", modeRows))
         sections.add(AnchoredPicker.Section("More", voiceRows))
 
-        showAnchoredPicker(plusAnchor, "Menu", sections, toggleSameAnchor = !replace)
+        showAnchoredPicker(
+            plusAnchor,
+            "Menu",
+            sections,
+            toggleSameAnchor = !replace,
+            replaceShowing = replace
+        )
     }
 
     private fun toggleReasoningStream() {
@@ -1272,22 +1423,16 @@ class OverlayController(
 
     private fun showSessionsMenu() {
         val anchor = plusButton ?: panelHost ?: return
-        val sessions = lastChatState.sessions
-        if (sessions.isEmpty()) {
+        val rows = sessionPickerRows()
+        if (rows.isEmpty()) {
             setStatus("No previous chats yet.")
             return
         }
-        val rows = sessions.take(20).map { session ->
-            val label = session.displayName ?: session.label ?: session.sessionId ?: session.key.substringAfterLast(":")
-            AnchoredPicker.Row(
-                label = label.take(40),
-                sublabel = session.model,
-                iconRes = R.drawable.ic_session,
-                selected = session.key == lastChatState.sessionKey,
-                onSelect = { onSelectChatSession(session.key) }
-            )
-        }
         showAnchoredPicker(anchor, "Previous chats", listOf(AnchoredPicker.Section(null, rows)), toggleSameAnchor = false)
+    }
+
+    private fun sessionLabel(session: ChatSessionRow): String {
+        return session.displayName ?: session.label ?: session.sessionId ?: session.key.substringAfterLast(":")
     }
 
     private fun showUsageControls() {
@@ -1441,13 +1586,34 @@ class OverlayController(
         }
         reasoningButton?.text = formatReasoningLabel(state.reasoningEffort)
         contextUsageView?.bind(tokens, state.usage.contextRatio)
-        modelTitleSubtext?.text = state.selectedModel?.let { modelDisplayLabel(it) }
-            ?: state.status ?: "Ready"
         statusText?.let { sv ->
             state.status?.let { sv.setText(it) }
             sv.setActive(state.isRunning)
         }
+        renderBubbleUnreadBadge(state)
         renderTimeline(state)
+    }
+
+    private fun renderBubbleUnreadBadge(state: ChatState) {
+        val badge = bubbleUnreadBadgeView ?: return
+        val count = state.totalUnreadReplies
+        if (count <= 0) {
+            badge.visibility = View.GONE
+            badge.text = ""
+            bubbleView?.contentDescription = "Open Claw Agent"
+            return
+        }
+        badge.text = badgeText(count)
+        badge.visibility = View.VISIBLE
+        bubbleView?.contentDescription = "Open Claw Agent, $count unread replies"
+    }
+
+    private fun notifyCurrentChatSessionViewed() {
+        lastChatState.sessionKey?.takeIf { it.isNotBlank() }?.let(onChatSessionViewed)
+    }
+
+    private fun badgeText(count: Int): String {
+        return if (count > 99) "99+" else count.toString()
     }
 
     private fun formatModelLabel(model: String?): String {
@@ -1541,7 +1707,7 @@ class OverlayController(
             })
 
             addView(TextView(context).apply {
-                text = "OpenClaw is ready. Say something or pick a session from the + menu."
+                text = "OpenClaw is ready. Say something or pick a previous chat from the title menu."
                 Typography.applyBody(this, tokens, secondary = true)
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(
@@ -1565,13 +1731,63 @@ class OverlayController(
                 setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.sm), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.sm))
                 background = Drawables.chatBubbleSystem(context, tokens)
                 setTextColor(tokens.bubbleSystemInk)
+                attachMessageCopyGesture(this, item.text)
             }
         }
 
         val isUser = role == "user"
+        val isAssistant = role == "assistant"
         val isStreaming = !isUser && item.isStreaming && item.text.isBlank()
 
-        val bubble = TextView(context).apply {
+        val maxWidth = (context.resources.displayMetrics.widthPixels * 0.78f).toInt()
+        val bubble = if (isAssistant && !isStreaming) {
+            val chunks = MarkdownFencedCodeParser.parse(item.text)
+            if (chunks.any { it is MarkdownFencedCodeChunk.CodeBlock }) {
+                assistantMessageBubbleWithCodeBlocks(
+                    messageText = item.text,
+                    chunks = chunks,
+                    tokens = tokens,
+                    maxWidth = maxWidth
+                )
+            } else {
+                plainMessageBubble(
+                    messageText = item.text,
+                    tokens = tokens,
+                    isUser = false,
+                    isStreaming = false,
+                    maxWidth = maxWidth
+                )
+            }
+        } else {
+            plainMessageBubble(
+                messageText = item.text,
+                tokens = tokens,
+                isUser = isUser,
+                isStreaming = isStreaming,
+                maxWidth = maxWidth
+            )
+        }
+
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = if (isUser) Gravity.END else Gravity.START
+            addView(bubble, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                this.gravity = if (isUser) Gravity.END else Gravity.START
+            })
+        }
+    }
+
+    private fun plainMessageBubble(
+        messageText: String,
+        tokens: ThemeTokens,
+        isUser: Boolean,
+        isStreaming: Boolean,
+        maxWidth: Int
+    ): TextView {
+        return TextView(context).apply {
             Typography.applyCallout(this, tokens)
             setTextColor(if (isUser) tokens.bubbleUserInk else tokens.bubbleAssistantInk)
             setLinkTextColor(tokens.accent)
@@ -1585,27 +1801,119 @@ class OverlayController(
             background = if (isUser) Drawables.chatBubbleUser(context, tokens)
                 else Drawables.chatBubbleAssistant(context, tokens)
             movementMethod = android.text.method.LinkMovementMethod.getInstance()
+            this.maxWidth = maxWidth
             if (isStreaming) {
                 text = "•  •  •"
                 animateStreamingDots(this)
             } else if (isUser) {
-                text = item.text
+                text = messageText
             } else {
-                MarkdownRenderer.render(this, item.text, tokens)
+                MarkdownRenderer.render(this, messageText, tokens)
             }
+            attachMessageCopyGesture(this, messageText, enabled = !isStreaming)
         }
+    }
 
-        val maxWidth = (context.resources.displayMetrics.widthPixels * 0.78f).toInt()
+    private fun assistantMessageBubbleWithCodeBlocks(
+        messageText: String,
+        chunks: List<MarkdownFencedCodeChunk>,
+        tokens: ThemeTokens,
+        maxWidth: Int
+    ): LinearLayout {
+        val horizontalPadding = dp(DesignTokens.Spacing.md + 2)
+        val childMaxWidth = (maxWidth - (horizontalPadding * 2)).coerceAtLeast(dp(120))
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = if (isUser) Gravity.END else Gravity.START
-            addView(bubble, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                this.gravity = if (isUser) Gravity.END else Gravity.START
-                bubble.maxWidth = maxWidth
-            })
+            setPadding(
+                horizontalPadding,
+                dp(DesignTokens.Spacing.sm + 2),
+                horizontalPadding,
+                dp(DesignTokens.Spacing.sm + 2)
+            )
+            background = Drawables.chatBubbleAssistant(context, tokens)
+            attachMessageCopyGesture(this, messageText)
+
+            chunks.forEach { chunk ->
+                val child = when (chunk) {
+                    is MarkdownFencedCodeChunk.Prose -> proseChunkView(chunk.text, tokens, childMaxWidth).also {
+                        attachMessageCopyGesture(it, messageText)
+                    }
+                    is MarkdownFencedCodeChunk.CodeBlock -> codeBlockChunkView(chunk, tokens, messageText, childMaxWidth)
+                }
+                addChunkView(child)
+            }
+        }
+    }
+
+    private fun proseChunkView(
+        text: String,
+        tokens: ThemeTokens,
+        maxWidth: Int
+    ): TextView {
+        return TextView(context).apply {
+            Typography.applyCallout(this, tokens)
+            setTextColor(tokens.bubbleAssistantInk)
+            setLinkTextColor(tokens.accent)
+            setLineSpacing(dp(DesignTokens.Spacing.xs).toFloat(), 1.0f)
+            this.maxWidth = maxWidth
+            MarkdownRenderer.render(this, text, tokens)
+        }
+    }
+
+    private fun codeBlockChunkView(
+        chunk: MarkdownFencedCodeChunk.CodeBlock,
+        tokens: ThemeTokens,
+        messageText: String,
+        maxWidth: Int
+    ): TextView {
+        return TextView(context).apply {
+            Typography.applyMono(this, tokens)
+            setTextColor(tokens.bubbleAssistantInk)
+            setPadding(
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.sm),
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.sm)
+            )
+            setLineSpacing(dp(DesignTokens.Spacing.xs).toFloat(), 1.0f)
+            background = Drawables.rippleOver(
+                context,
+                tokens,
+                Drawables.glassInset(context, tokens, DesignTokens.Radius.sm)
+            )
+            this.maxWidth = maxWidth
+            minWidth = dp(96)
+            text = chunk.code.ifEmpty { " " }
+            setOnClickListener {
+                ClipboardHelper.copyCodeBlock(context, chunk.copyText)
+            }
+            attachMessageCopyGesture(this, messageText)
+        }
+    }
+
+    private fun LinearLayout.addChunkView(child: View) {
+        val hasPreviousChunk = isNotEmpty()
+        addView(child, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            if (hasPreviousChunk) {
+                topMargin = dp(DesignTokens.Spacing.sm)
+            }
+        })
+    }
+
+    private fun attachMessageCopyGesture(
+        view: View,
+        messageText: String,
+        enabled: Boolean = true
+    ) {
+        if (!enabled || messageText.isBlank()) {
+            return
+        }
+        view.setOnLongClickListener {
+            ClipboardHelper.copyMessage(context, messageText)
+            true
         }
     }
 
@@ -1775,7 +2083,8 @@ class OverlayController(
         modelButton = null
         reasoningButton = null
         contextUsageView = null
-        modelTitleSubtext = null
+        headerSessionAnchor = null
+        headerSessionChevron = null
         plusButton = null
     }
 

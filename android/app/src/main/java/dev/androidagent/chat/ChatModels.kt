@@ -76,6 +76,21 @@ data class ChatUsageSummary(
         }
 }
 
+data class ChatUnreadReply(
+    val count: Int = 0,
+    val runIds: Set<String> = emptySet(),
+    val latestRunId: String? = null,
+    val latestPreview: String? = null,
+    val latestStatus: String? = null,
+    val sessionId: String? = null,
+    val sessionLabel: String? = null,
+    val sessionDisplayName: String? = null
+) {
+    fun displayNameFor(sessionKey: String): String {
+        return sessionDisplayName ?: sessionLabel ?: sessionId ?: sessionKey.substringAfterLast(":")
+    }
+}
+
 data class ChatState(
     val sessionKey: String? = null,
     val sessionId: String? = null,
@@ -84,7 +99,7 @@ data class ChatState(
     val status: String? = null,
     val error: String? = null,
     val selectedModel: String? = null,
-    val reasoningEffort: String? = null,
+    val reasoningEffort: String? = "medium",
     val reasoningStreamEnabled: Boolean? = null,
     val fastMode: Boolean? = null,
     val verboseLevel: String? = null,
@@ -94,10 +109,19 @@ data class ChatState(
     val reasoningOptions: List<ChatReasoningOption> = defaultReasoningOptions,
     val commands: List<ChatCommandOption> = emptyList(),
     val tools: List<ChatToolSummary> = emptyList(),
-    val usage: ChatUsageSummary = ChatUsageSummary()
+    val usage: ChatUsageSummary = ChatUsageSummary(),
+    val unreadReplies: Map<String, ChatUnreadReply> = emptyMap()
 ) {
     val latestAssistantText: String?
         get() = timeline.lastOrNull { it.kind == ChatTimelineKind.MESSAGE && it.role == "assistant" }?.text
+
+    val totalUnreadReplies: Int
+        get() = unreadReplies.values.sumOf { it.count }
+
+    fun unreadCountForSession(sessionKey: String?): Int {
+        if (sessionKey.isNullOrBlank()) return 0
+        return unreadReplies[sessionKey]?.count ?: 0
+    }
 
     companion object {
         val defaultReasoningOptions = listOf(
@@ -141,6 +165,12 @@ object ChatStateReducer {
         )
     }
 
+    fun markSessionRead(state: ChatState, sessionKey: String?): ChatState {
+        val key = sessionKey?.takeIf { it.isNotBlank() } ?: return state
+        if (!state.unreadReplies.containsKey(key)) return state
+        return state.copy(unreadReplies = state.unreadReplies - key)
+    }
+
     fun reduce(state: ChatState, message: JSONObject): ChatState {
         return when (message.optString("type")) {
             "chat.state" -> reduceState(state, message)
@@ -151,6 +181,7 @@ object ChatStateReducer {
             "chat.delta" -> reduceDelta(state, message)
             "chat.final" -> reduceFinal(state, message)
             "chat.error" -> reduceError(state, message)
+            "chat.reply_available" -> reduceReplyAvailable(state, message)
             "chat.tool_event" -> reduceToolEvent(state, message)
             "chat.models" -> reduceModels(state, message)
             "chat.commands" -> state.copy(commands = parseCommands(message.optJSONArray("commands")), error = null)
@@ -177,7 +208,7 @@ object ChatStateReducer {
             isRunning = message.optBoolean("isRunning", state.isRunning),
             status = message.optNullableString("status") ?: state.status,
             selectedModel = message.optNullableString("model") ?: state.selectedModel,
-            reasoningEffort = message.optNullableString("reasoningEffort") ?: state.reasoningEffort,
+            reasoningEffort = normalizeReasoningEffort(message.optNullableString("reasoningEffort"), state.reasoningEffort),
             reasoningStreamEnabled = message.optNullableBoolean("reasoningStream") ?: state.reasoningStreamEnabled,
             fastMode = message.optNullableBoolean("fastMode") ?: state.fastMode,
             verboseLevel = message.optNullableString("verboseLevel") ?: state.verboseLevel,
@@ -315,6 +346,29 @@ object ChatStateReducer {
         )
     }
 
+    private fun reduceReplyAvailable(state: ChatState, message: JSONObject): ChatState {
+        val sessionKey = message.optNullableString("sessionKey") ?: return state
+        val runId = message.optNullableString("runId") ?: return state
+        val existing = state.unreadReplies[sessionKey]
+        if (existing?.runIds?.contains(runId) == true) {
+            return state
+        }
+        val updated = ChatUnreadReply(
+            count = (existing?.count ?: 0) + 1,
+            runIds = (existing?.runIds ?: emptySet()) + runId,
+            latestRunId = runId,
+            latestPreview = message.optNullableString("textPreview") ?: existing?.latestPreview,
+            latestStatus = message.optNullableString("status") ?: existing?.latestStatus,
+            sessionId = message.optNullableString("sessionId") ?: existing?.sessionId,
+            sessionLabel = message.optNullableString("sessionLabel") ?: existing?.sessionLabel,
+            sessionDisplayName = message.optNullableString("sessionDisplayName") ?: existing?.sessionDisplayName
+        )
+        return state.copy(
+            unreadReplies = state.unreadReplies + (sessionKey to updated),
+            error = null
+        )
+    }
+
     private fun reduceToolEvent(state: ChatState, message: JSONObject): ChatState {
         val event = ChatToolEvent(
             eventId = message.optString("eventId", "tool_${UUID.randomUUID()}"),
@@ -361,7 +415,7 @@ object ChatStateReducer {
             sessionKey = selectedKey,
             sessions = sessions,
             selectedModel = selected?.model ?: state.selectedModel,
-            reasoningEffort = selected?.thinkingLevel ?: state.reasoningEffort,
+            reasoningEffort = normalizeReasoningEffort(selected?.thinkingLevel, state.reasoningEffort),
             reasoningStreamEnabled = selected?.reasoningLevel?.let(::reasoningStreamEnabled) ?: state.reasoningStreamEnabled,
             fastMode = selected?.fastMode ?: state.fastMode,
             verboseLevel = selected?.verboseLevel ?: state.verboseLevel,
@@ -374,8 +428,25 @@ object ChatStateReducer {
                     estimatedCostUsd = it.estimatedCostUsd
                 )
             } ?: state.usage,
+            unreadReplies = mergeUnreadSessionMetadata(state.unreadReplies, sessions),
             error = null
         )
+    }
+
+    private fun mergeUnreadSessionMetadata(
+        unreadReplies: Map<String, ChatUnreadReply>,
+        sessions: List<ChatSessionRow>
+    ): Map<String, ChatUnreadReply> {
+        if (unreadReplies.isEmpty() || sessions.isEmpty()) return unreadReplies
+        val sessionsByKey = sessions.associateBy { it.key }
+        return unreadReplies.mapValues { (sessionKey, unread) ->
+            val session = sessionsByKey[sessionKey] ?: return@mapValues unread
+            unread.copy(
+                sessionId = session.sessionId ?: unread.sessionId,
+                sessionLabel = session.label ?: unread.sessionLabel,
+                sessionDisplayName = session.displayName ?: unread.sessionDisplayName
+            )
+        }
     }
 
     private fun upsertTimeline(timeline: List<ChatTimelineItem>, item: ChatTimelineItem): List<ChatTimelineItem> {
@@ -587,6 +658,16 @@ object ChatStateReducer {
 
     private fun reasoningStreamEnabled(level: String): Boolean {
         return level == "stream"
+    }
+
+    private fun normalizeReasoningEffort(incoming: String?, current: String?): String {
+        val normalizedIncoming = incoming?.trim()?.lowercase()
+        val normalizedCurrent = current?.trim()?.lowercase()
+        return when {
+            normalizedIncoming != null && normalizedIncoming in ChatState.allowedReasoningIds -> normalizedIncoming
+            normalizedCurrent != null && normalizedCurrent in ChatState.allowedReasoningIds -> normalizedCurrent
+            else -> "medium"
+        }
     }
 
     private data class TimelineOrderingItem(

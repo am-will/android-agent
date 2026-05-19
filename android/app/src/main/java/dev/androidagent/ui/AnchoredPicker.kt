@@ -3,6 +3,7 @@ package dev.androidagent.ui
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -43,6 +44,7 @@ class AnchoredPicker(
         val selected: Boolean = false,
         val destructive: Boolean = false,
         val enabled: Boolean = true,
+        val badgeCount: Int = 0,
         val dismissOnSelect: Boolean = true,
         val onSelect: () -> Unit
     )
@@ -60,6 +62,15 @@ class AnchoredPicker(
         get() = sheetView != null
 
     fun isShowingFor(anchor: View): Boolean = sheetView != null && currentAnchor === anchor
+
+    fun update(title: String? = null, sections: List<Section>) {
+        val sheet = sheetView as? LinearLayout ?: return
+        val scrollY = findBodyScroller(sheet)?.scrollY ?: 0
+        bindSheetContent(sheet, title, sections)
+        sheet.post {
+            findBodyScroller(sheet)?.scrollTo(0, scrollY)
+        }
+    }
 
     fun show(
         host: FrameLayout,
@@ -231,6 +242,13 @@ class AnchoredPicker(
             maxWidth.let { mw -> layoutParams = ViewGroup.LayoutParams(mw, ViewGroup.LayoutParams.WRAP_CONTENT) }
         }
 
+        bindSheetContent(container, title, sections)
+        container.maxHeight(maxHeight)
+        return container
+    }
+
+    private fun bindSheetContent(container: LinearLayout, title: String?, sections: List<Section>) {
+        container.removeAllViews()
         if (!title.isNullOrBlank()) {
             container.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -254,12 +272,13 @@ class AnchoredPicker(
         }
 
         val scroller = ScrollView(context).apply {
+            tag = BODY_SCROLLER_TAG
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             isVerticalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { maxHeight.let { /* hint */ } }
+            )
         }
 
         val body = LinearLayout(context).apply {
@@ -293,8 +312,16 @@ class AnchoredPicker(
         }
 
         container.addView(scroller)
-        container.maxHeight(maxHeight)
-        return container
+    }
+
+    private fun findBodyScroller(container: LinearLayout): ScrollView? {
+        for (index in 0 until container.childCount) {
+            val child = container.getChildAt(index)
+            if (child is ScrollView && child.tag == BODY_SCROLLER_TAG) {
+                return child
+            }
+        }
+        return null
     }
 
     private fun View.maxHeight(maxPx: Int) {
@@ -337,11 +364,31 @@ class AnchoredPicker(
         }
 
         row.iconRes?.let { iconRes ->
-            rowView.addView(ImageView(context).apply {
-                setImageResource(iconRes)
-                setColorFilter(if (row.destructive) tokens.danger else tokens.secondaryText)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-            }, LinearLayout.LayoutParams(dp(context, 20), dp(context, 20)).apply {
+            val iconFrame = FrameLayout(context).apply {
+                addView(ImageView(context).apply {
+                    setImageResource(iconRes)
+                    setColorFilter(if (row.destructive) tokens.danger else tokens.secondaryText)
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                }, FrameLayout.LayoutParams(dp(context, 20), dp(context, 20), Gravity.CENTER))
+                if (row.badgeCount > 0) {
+                    addView(TextView(context).apply {
+                        text = badgeText(row.badgeCount)
+                        textSize = 9f
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setTextColor(Color.WHITE)
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            cornerRadius = dp(context, 8).toFloat()
+                            setColor(0xFFE53935.toInt())
+                        }
+                        minWidth = dp(context, 16)
+                        minHeight = dp(context, 16)
+                        setPadding(dp(context, 3), 0, dp(context, 3), 0)
+                    }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, dp(context, 16), Gravity.TOP or Gravity.END))
+                }
+            }
+            rowView.addView(iconFrame, LinearLayout.LayoutParams(dp(context, 26), dp(context, 26)).apply {
                 rightMargin = dp(context, DesignTokens.Spacing.md)
             })
         }
@@ -380,7 +427,15 @@ class AnchoredPicker(
         return rowView
     }
 
+    private fun badgeText(count: Int): String {
+        return if (count > 99) "99+" else count.toString()
+    }
+
     private fun divider(): View = View(context).apply {
         setBackgroundColor(withAlpha(tokens.borderSoft, 0xCC))
+    }
+
+    companion object {
+        private const val BODY_SCROLLER_TAG = "anchored_picker_body_scroller"
     }
 }

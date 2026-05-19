@@ -38,8 +38,12 @@ class PhoneWebSocketClient(
     private var manuallyClosed = false
     private var reconnectAttempts = 0
     private var connected = false
+    private var reconnectRunnable: Runnable? = null
 
     fun connect() {
+        if (manuallyClosed) return
+        if (socket != null) return
+        cancelScheduledReconnect()
         manuallyClosed = false
         connected = false
         val request = Request.Builder().url(config.hostUrl).build()
@@ -52,7 +56,7 @@ class PhoneWebSocketClient(
         connected = false
         socket?.close(1000, "service stopped")
         socket = null
-        mainHandler.removeCallbacksAndMessages(null)
+        cancelScheduledReconnect()
         client.dispatcher.executorService.shutdown()
     }
 
@@ -192,6 +196,11 @@ class PhoneWebSocketClient(
     }
 
     override fun onOpen(webSocket: WebSocket, response: Response) {
+        if (webSocket != socket) {
+            webSocket.close(1000, "stale connection")
+            return
+        }
+        cancelScheduledReconnect()
         reconnectAttempts = 0
         connected = true
         val register = JSONObject()
@@ -223,6 +232,7 @@ class PhoneWebSocketClient(
             "chat.reasoning_clear",
             "chat.final",
             "chat.error",
+            "chat.reply_available",
             "chat.tool_event",
             "chat.models",
             "chat.commands",
@@ -241,12 +251,16 @@ class PhoneWebSocketClient(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+        if (webSocket != socket) return
+        socket = null
         connected = false
         onStatus("WebSocket error: ${t.message}", "error")
         scheduleReconnect()
     }
 
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+        if (webSocket != socket) return
+        socket = null
         connected = false
         onStatus("Disconnected: $reason", "error")
         scheduleReconnect()
@@ -270,12 +284,24 @@ class PhoneWebSocketClient(
     }
 
     private fun scheduleReconnect() {
-        if (manuallyClosed) {
+        if (manuallyClosed || reconnectRunnable != null) {
             return
         }
         val delayMs = (1_000L * (reconnectAttempts + 1)).coerceAtMost(10_000L)
         reconnectAttempts += 1
-        mainHandler.postDelayed({ connect() }, delayMs)
+        val task = Runnable {
+            reconnectRunnable = null
+            if (!manuallyClosed && !connected) {
+                connect()
+            }
+        }
+        reconnectRunnable = task
+        mainHandler.postDelayed(task, delayMs)
+    }
+
+    private fun cancelScheduledReconnect() {
+        reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
+        reconnectRunnable = null
     }
 
     private fun handleCommand(webSocket: WebSocket, message: JSONObject) {

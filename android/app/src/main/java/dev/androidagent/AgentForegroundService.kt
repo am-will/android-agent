@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -21,6 +22,7 @@ import dev.androidagent.chat.ChatState
 import dev.androidagent.chat.ChatStateReducer
 import dev.androidagent.chat.ChatTimelineItem
 import dev.androidagent.chat.ChatTimelineKind
+import dev.androidagent.chat.ChatUnreadReply
 import dev.androidagent.chat.ChatUsageSummary
 import dev.androidagent.net.PhoneWebSocketClient
 import dev.androidagent.voice.VoiceRuntimeController
@@ -44,6 +46,7 @@ class AgentForegroundService : Service() {
     private var isAgentTurnActive = false
     private var chatState = ChatState()
     private var pendingNewChat = false
+    private var notifiedReplySessions = emptySet<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -66,7 +69,10 @@ class AgentForegroundService : Service() {
             onStartTranscription = { startComposerTranscription() },
             onStopTranscription = { stopComposerTranscription() },
             onCancelTranscription = { cancelComposerTranscription() },
-            onSelectChatSession = { sessionKey -> webSocketClient?.sendChatSelectSession(sessionKey) },
+            onSelectChatSession = { sessionKey ->
+                webSocketClient?.sendChatSelectSession(sessionKey)
+                markChatSessionRead(sessionKey)
+            },
             onNewChatSession = { startNewChatFromUi() },
             onSetChatModel = { model -> webSocketClient?.sendChatSetModel(chatState.sessionKey, model) },
             onSetChatReasoning = { reasoning -> webSocketClient?.sendChatSetReasoning(chatState.sessionKey, reasoning) },
@@ -74,7 +80,8 @@ class AgentForegroundService : Service() {
             onToggleChatTool = { eventId ->
                 chatState = ChatStateReducer.toggleTool(chatState, eventId)
                 overlayController?.setChatState(chatState)
-            }
+            },
+            onChatSessionViewed = { sessionKey -> markChatSessionRead(sessionKey) }
         ).also { it.show() }
         voiceRuntimeController = VoiceRuntimeController(
             context = this,
@@ -98,6 +105,16 @@ class AgentForegroundService : Service() {
             ACTION_OPEN_CHAT -> {
                 overlayController?.show()
                 overlayController?.openPanel()
+                return START_STICKY
+            }
+            ACTION_OPEN_CHAT_SESSION -> {
+                val sessionKey = intent.getStringExtra(EXTRA_SESSION_KEY)
+                if (!sessionKey.isNullOrBlank()) {
+                    openChatSessionFromNotification(sessionKey)
+                } else {
+                    overlayController?.show()
+                    overlayController?.openPanel()
+                }
                 return START_STICKY
             }
         }
@@ -220,7 +237,15 @@ class AgentForegroundService : Service() {
                     return@launch
                 }
             }
+            val replySessionKey = if (message.optString("type") == "chat.reply_available") {
+                message.optString("sessionKey").takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
             chatState = ChatStateReducer.reduce(chatState, message)
+            if (replySessionKey != null && overlayController?.isViewingChatSession(replySessionKey) == true) {
+                chatState = ChatStateReducer.markSessionRead(chatState, replySessionKey)
+            }
             if (
                 pendingNewChat &&
                 message.optString("type") == "chat.state" &&
@@ -232,7 +257,35 @@ class AgentForegroundService : Service() {
             overlayController?.setChatState(chatState)
             chatState.status?.takeIf { it.isNotBlank() }?.let { lastNotificationText = it }
             isAgentTurnActive = chatState.isRunning
+            syncReplyNotifications()
             updateNotification()
+        }
+    }
+
+    private fun markChatSessionRead(sessionKey: String?) {
+        val key = sessionKey?.takeIf { it.isNotBlank() } ?: return
+        if (chatState.unreadCountForSession(key) <= 0) {
+            cancelReplyNotification(key)
+            return
+        }
+        chatState = ChatStateReducer.markSessionRead(chatState, key)
+        overlayController?.setChatState(chatState)
+        syncReplyNotifications()
+        updateNotification()
+    }
+
+    private fun openChatSessionFromNotification(sessionKey: String) {
+        webSocketClient?.sendChatSelectSession(sessionKey)
+        markChatSessionRead(sessionKey)
+        cancelReplyNotification(sessionKey)
+        if (Settings.canDrawOverlays(this)) {
+            overlayController?.show()
+            overlayController?.openChatPanel(markCurrentSessionViewed = false)
+        } else {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            )
         }
     }
 
@@ -361,8 +414,11 @@ class AgentForegroundService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL_ID, "Open Claw Agent", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Open Claw Agent", NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(REPLY_CHANNEL_ID, "OpenClaw replies", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Per-session reply notifications from OpenClaw"
+            })
         }
     }
 
@@ -370,20 +426,87 @@ class AgentForegroundService : Service() {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
     }
 
+    private fun syncReplyNotifications() {
+        val manager = getSystemService(NotificationManager::class.java)
+        val nextSessions = chatState.unreadReplies.keys
+        for (sessionKey in notifiedReplySessions - nextSessions) {
+            manager.cancel(replyNotificationId(sessionKey))
+        }
+        for ((sessionKey, unread) in chatState.unreadReplies) {
+            runCatching {
+                manager.notify(replyNotificationId(sessionKey), replyNotification(sessionKey, unread))
+            }.onFailure { error ->
+                Log.w(TAG, "Failed to post reply notification for $sessionKey", error)
+            }
+        }
+        notifiedReplySessions = nextSessions
+    }
+
+    private fun cancelReplyNotification(sessionKey: String) {
+        getSystemService(NotificationManager::class.java).cancel(replyNotificationId(sessionKey))
+        notifiedReplySessions = notifiedReplySessions - sessionKey
+    }
+
     private fun notification(): Notification {
         val stopIntent = Intent(this, AgentForegroundService::class.java).setAction(ACTION_STOP_TURN)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, flags)
+        val openPendingIntent = PendingIntent.getService(
+            this,
+            REQUEST_OPEN_CHAT,
+            Intent(this, AgentForegroundService::class.java).setAction(ACTION_OPEN_CHAT),
+            flags
+        )
+        val unreadCount = chatState.totalUnreadReplies
+        val notificationText = if (unreadCount > 0) {
+            "$unreadCount unread OpenClaw ${if (unreadCount == 1) "reply" else "replies"}"
+        } else {
+            lastNotificationText
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_bubble)
             .setColor(0xFF245BFF.toInt())
-            .setContentTitle(if (isAgentTurnActive) "Open Claw Agent working" else "Open Claw Agent active")
-            .setContentText(lastNotificationText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(lastNotificationText))
+            .setContentTitle(when {
+                isAgentTurnActive -> "Open Claw Agent working"
+                unreadCount > 0 -> "Open Claw Agent replied"
+                else -> "Open Claw Agent active"
+            })
+            .setContentText(notificationText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notificationText))
+            .setContentIntent(openPendingIntent)
+            .setNumber(unreadCount)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .addAction(R.drawable.ic_close, "Stop Turn", stopPendingIntent)
             .build()
+    }
+
+    private fun replyNotification(sessionKey: String, unread: ChatUnreadReply): Notification {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val openIntent = Intent(this, AgentForegroundService::class.java)
+            .setAction(ACTION_OPEN_CHAT_SESSION)
+            .putExtra(EXTRA_SESSION_KEY, sessionKey)
+        val contentIntent = PendingIntent.getService(this, replyNotificationId(sessionKey), openIntent, flags)
+        val label = unread.displayNameFor(sessionKey)
+        val count = unread.count
+        val text = unread.latestPreview
+            ?: if (unread.latestStatus == "failed") "OpenClaw failed. Tap to view details." else "Tap to view the reply."
+        return NotificationCompat.Builder(this, REPLY_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_bubble)
+            .setColor(0xFF245BFF.toInt())
+            .setContentTitle(if (count > 1) "$count unread replies in $label" else "OpenClaw replied in $label")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(contentIntent)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setNumber(count)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun replyNotificationId(sessionKey: String): Int {
+        return REPLY_NOTIFICATION_ID_BASE + (sessionKey.hashCode() and 0x0FFFFFFF)
     }
 
     private fun broadcastRunningState() {
@@ -398,11 +521,16 @@ class AgentForegroundService : Service() {
         private const val TAG = "AgentService"
         private const val ACTION_STOP_TURN = "dev.openclawagent.action.STOP_TURN"
         const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
+        private const val ACTION_OPEN_CHAT_SESSION = "dev.openclawagent.action.OPEN_CHAT_SESSION"
+        private const val EXTRA_SESSION_KEY = "sessionKey"
         private const val NOTIFICATION_ID = 1
+        private const val REPLY_NOTIFICATION_ID_BASE = 10_000
+        private const val REQUEST_OPEN_CHAT = 2
         private const val DEFAULT_NOTIFICATION_TEXT = "Floating bubble and Open Claw bridge are running"
         const val ACTION_STATE_CHANGED = "dev.openclawagent.action.AGENT_SERVICE_STATE_CHANGED"
         const val EXTRA_IS_RUNNING = "isRunning"
         const val CHANNEL_ID = "open-claw-agent"
+        private const val REPLY_CHANNEL_ID = "open-claw-agent-replies"
         var isRunning: Boolean = false
             private set
     }

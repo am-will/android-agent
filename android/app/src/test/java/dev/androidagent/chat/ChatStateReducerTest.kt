@@ -198,6 +198,23 @@ class ChatStateReducerTest {
     }
 
     @Test
+    fun invalidReasoningEffortFallsBackToLastKnownOrMedium() {
+        val initial = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.state")
+            .put("sessionKey", "agent:main:main")
+            .put("reasoningEffort", "off"))
+        val withKnown = ChatStateReducer.reduce(initial.copy(reasoningEffort = "high"), JSONObject()
+            .put("type", "chat.sessions")
+            .put("selectedSessionKey", "agent:main:main")
+            .put("sessions", JSONArray().put(JSONObject()
+                .put("key", "agent:main:main")
+                .put("thinkingLevel", "off"))))
+
+        assertEquals("medium", initial.reasoningEffort)
+        assertEquals("high", withKnown.reasoningEffort)
+    }
+
+    @Test
     fun sessionsUpdateUsageAndSelections() {
         val state = ChatStateReducer.reduce(ChatState(), JSONObject()
             .put("type", "chat.sessions")
@@ -213,5 +230,69 @@ class ChatStateReducerTest {
         assertEquals("high", state.reasoningEffort)
         assertEquals(50L, state.usage.totalTokens)
         assertEquals(0.5f, state.usage.contextRatio)
+    }
+
+    @Test
+    fun replyAvailableAddsUnreadPerSessionAndDedupesRunIds() {
+        val first = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.reply_available")
+            .put("sessionKey", "agent:main:first")
+            .put("runId", "run1")
+            .put("status", "completed")
+            .put("textPreview", "First reply"))
+        val duplicate = ChatStateReducer.reduce(first, JSONObject()
+            .put("type", "chat.reply_available")
+            .put("sessionKey", "agent:main:first")
+            .put("runId", "run1")
+            .put("status", "completed")
+            .put("textPreview", "First reply again"))
+        val secondSession = ChatStateReducer.reduce(duplicate, JSONObject()
+            .put("type", "chat.reply_available")
+            .put("sessionKey", "agent:main:second")
+            .put("runId", "run2")
+            .put("status", "failed")
+            .put("textPreview", "Second reply"))
+
+        assertEquals(1, first.unreadCountForSession("agent:main:first"))
+        assertEquals(1, duplicate.unreadCountForSession("agent:main:first"))
+        assertEquals(2, secondSession.totalUnreadReplies)
+        assertEquals("Second reply", secondSession.unreadReplies["agent:main:second"]?.latestPreview)
+    }
+
+    @Test
+    fun markSessionReadClearsOnlyThatSession() {
+        val withUnread = listOf("first" to "run1", "second" to "run2").fold(ChatState()) { state, (session, run) ->
+            ChatStateReducer.reduce(state, JSONObject()
+                .put("type", "chat.reply_available")
+                .put("sessionKey", "agent:main:$session")
+                .put("runId", run)
+                .put("textPreview", session))
+        }
+
+        val cleared = ChatStateReducer.markSessionRead(withUnread, "agent:main:first")
+
+        assertEquals(0, cleared.unreadCountForSession("agent:main:first"))
+        assertEquals(1, cleared.unreadCountForSession("agent:main:second"))
+        assertEquals(1, cleared.totalUnreadReplies)
+    }
+
+    @Test
+    fun sessionsRefreshEnrichesUnreadSessionLabels() {
+        val withUnread = ChatStateReducer.reduce(ChatState(), JSONObject()
+            .put("type", "chat.reply_available")
+            .put("sessionKey", "agent:main:first")
+            .put("runId", "run1"))
+
+        val withSessions = ChatStateReducer.reduce(withUnread, JSONObject()
+            .put("type", "chat.sessions")
+            .put("selectedSessionKey", "agent:main:other")
+            .put("sessions", JSONArray().put(JSONObject()
+                .put("key", "agent:main:first")
+                .put("sessionId", "session-1")
+                .put("displayName", "Project notes"))))
+
+        val unread = withSessions.unreadReplies["agent:main:first"]
+        assertEquals("Project notes", unread?.sessionDisplayName)
+        assertEquals("Project notes", unread?.displayNameFor("agent:main:first"))
     }
 }
