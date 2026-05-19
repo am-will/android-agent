@@ -68,7 +68,19 @@ class AnchoredPicker(
         val scrollY = findBodyScroller(sheet)?.scrollY ?: 0
         bindSheetContent(sheet, title, sections)
         sheet.post {
+            reposition()
             findBodyScroller(sheet)?.scrollTo(0, scrollY)
+        }
+    }
+
+    fun reposition() {
+        val host = hostRef ?: return
+        val sheet = sheetView ?: return
+        val anchor = currentAnchor ?: return
+        sheet.post {
+            if (sheet.parent === host && anchor.isAttachedToWindow) {
+                positionSheet(host, sheet, anchor)
+            }
         }
     }
 

@@ -3188,12 +3188,12 @@ class OverlayController(
         if (stableFrameKeyboardHeight >= dp(120)) {
             stableKeyboardFrameObserved = true
         }
-        val keyboardHeight = if (imeHeight >= dp(120)) {
-            keyboardFallbackSuppressed = false
-            imeHeight
-        } else if (stableFrameKeyboardHeight >= dp(120)) {
+        val keyboardHeight = if (stableFrameKeyboardHeight >= dp(120)) {
             keyboardFallbackSuppressed = false
             stableFrameKeyboardHeight
+        } else if (imeHeight >= dp(120)) {
+            keyboardFallbackSuppressed = false
+            imeHeight + fullscreenKeyboardNavigationInset()
         } else if (stableKeyboardFrameObserved) {
             suppressKeyboardFallback()
             0
@@ -3214,11 +3214,12 @@ class OverlayController(
         val keyboardTop = displayHeight - keyboardHeight
         val minPanelHeight = dp(300)
         val desiredY = defaultY.coerceAtMost((keyboardTop - minPanelHeight).coerceAtLeast(dp(8)))
-        val desiredHeight = (keyboardTop - desiredY - dp(KEYBOARD_COMPOSER_GAP_DP)).coerceAtLeast(dp(240))
+        val desiredHeight = (keyboardTop - desiredY - keyboardComposerGap()).coerceAtLeast(dp(240))
         if (params.height != desiredHeight || params.y != desiredY) {
             params.height = desiredHeight
             params.y = desiredY
             windowManager.updateViewLayout(panel, params)
+            anchoredPicker?.reposition()
         }
     }
 
@@ -3254,6 +3255,7 @@ class OverlayController(
             params.height = defaultBounds.height
             params.y = defaultBounds.y
             windowManager.updateViewLayout(panel, params)
+            anchoredPicker?.reposition()
         }
     }
 
@@ -3300,6 +3302,24 @@ class OverlayController(
             return displayHeight.coerceAtMost(usableHeight)
         }
         return displayHeight
+    }
+
+    private fun fullscreenKeyboardNavigationInset(): Int {
+        if (activePanelPresentation != PanelPresentation.Fullscreen || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return 0
+        }
+        return windowManager.currentWindowMetrics.windowInsets
+            .getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars())
+            .bottom
+    }
+
+    private fun keyboardComposerGap(): Int {
+        val fullscreenExtraGap = if (activePanelPresentation == PanelPresentation.Fullscreen) {
+            dp(DesignTokens.Spacing.sm)
+        } else {
+            0
+        }
+        return dp(KEYBOARD_COMPOSER_GAP_DP) + fullscreenExtraGap
     }
 
     private fun estimatedKeyboardHeight(displayHeight: Int): Int {
