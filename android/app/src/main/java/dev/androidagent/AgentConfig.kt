@@ -48,3 +48,58 @@ object AgentConfigStore {
             .apply()
     }
 }
+
+enum class PanelAnimationStyle(val key: String) {
+    Circular("circular"),
+    Slide("slide");
+
+    companion object {
+        fun fromKey(value: String?): PanelAnimationStyle =
+            values().firstOrNull { it.key == value } ?: Circular
+    }
+}
+
+enum class PanelScrimStyle(val key: String) {
+    Ripple("ripple"),
+    Fade("fade");
+
+    companion object {
+        fun fromKey(value: String?): PanelScrimStyle =
+            values().firstOrNull { it.key == value } ?: Ripple
+    }
+}
+
+data class AppearancePrefs(
+    val panelAnimation: PanelAnimationStyle,
+    val scrimAnimation: PanelScrimStyle
+)
+
+object AppearancePrefsStore {
+    private const val PREFS = "open_claw_agent_appearance"
+    private const val PANEL_ANIMATION = "appearance_panel_animation"
+    private const val SCRIM_ANIMATION = "appearance_scrim_animation"
+
+    fun load(context: Context): AppearancePrefs {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return AppearancePrefs(
+            panelAnimation = PanelAnimationStyle.fromKey(prefs.getString(PANEL_ANIMATION, PanelAnimationStyle.Circular.key)),
+            scrimAnimation = PanelScrimStyle.fromKey(prefs.getString(SCRIM_ANIMATION, PanelScrimStyle.Ripple.key))
+        )
+    }
+
+    fun save(context: Context, prefs: AppearancePrefs) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PANEL_ANIMATION, prefs.panelAnimation.key)
+            .putString(SCRIM_ANIMATION, prefs.scrimAnimation.key)
+            .apply()
+    }
+
+    fun setPanelAnimation(context: Context, style: PanelAnimationStyle) {
+        save(context, load(context).copy(panelAnimation = style))
+    }
+
+    fun setScrimAnimation(context: Context, style: PanelScrimStyle) {
+        save(context, load(context).copy(scrimAnimation = style))
+    }
+}
