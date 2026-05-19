@@ -3163,8 +3163,8 @@ class OverlayController(
             val cy = height / 2f
             haloPaint.color = DesignTokens.withAlpha(color, if (tokens.isDark) 0x44 else 0x2E)
             dotPaint.color = color
-            canvas.drawCircle(cx, cy, dp(11).toFloat(), haloPaint)
-            canvas.drawCircle(cx, cy, dp(8).toFloat(), dotPaint)
+            canvas.drawCircle(cx, cy, dp(10).toFloat(), haloPaint)
+            canvas.drawCircle(cx, cy, dp(7).toFloat(), dotPaint)
         }
     }
 
