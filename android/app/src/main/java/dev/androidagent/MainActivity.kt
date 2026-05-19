@@ -76,7 +76,9 @@ class MainActivity : ComponentActivity() {
         buildUi()
         maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
-        AvatarLibrary.scanOnBoot(applicationContext, AgentConfigStore.load(this).hostUrl)
+        AgentConfigStore.load(this).also { config ->
+            AvatarLibrary.scanOnBoot(applicationContext, config.hostUrl, config.token)
+        }
     }
 
     override fun onStart() {
@@ -221,7 +223,12 @@ class MainActivity : ComponentActivity() {
 
         val hostInput = configField("WebSocket URL", config.hostUrl, tokens)
         val deviceInput = configField("Device ID", config.deviceId, tokens)
-        val tokenInput = configField("Auth token", config.token, tokens)
+        val tokenInput = configField(
+            "Auth token",
+            config.token,
+            tokens,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        )
         val openAiKeyInput = configField(
             "OpenAI API key for realtime voice",
             config.openAiApiKey,
@@ -488,9 +495,9 @@ class MainActivity : ComponentActivity() {
 
         refresh(AvatarLibrary.listCached(this))
 
-        val hostUrl = AgentConfigStore.load(this).hostUrl
+        val config = AgentConfigStore.load(this)
         avatarRefreshExecutor.execute {
-            val result = AvatarLibrary.refreshFromHost(applicationContext, hostUrl)
+            val result = AvatarLibrary.refreshFromHost(applicationContext, config.hostUrl, config.token)
             mainHandler.post {
                 result.onSuccess { pets ->
                     refresh(pets)
@@ -611,10 +618,12 @@ class MainActivity : ComponentActivity() {
         val accessibility = isAccessibilityEnabled()
         val service = AgentForegroundService.isRunning
         val tokens = tokens()
+        val bridgeTokenReady = config.token.isNotBlank()
 
         endpointSummary.text = """
             ${config.deviceId} -> ${config.hostUrl}
             ${modelLabel(config.model)} / ${reasoningLabel(config.reasoningEffort)} reasoning
+            Auth token: ${if (bridgeTokenReady) "saved" else "missing"}
         """.trimIndent()
 
         updateChip("overlay", if (overlay) "Granted" else "Missing", if (overlay) tokens.success else tokens.warning)
@@ -625,7 +634,9 @@ class MainActivity : ComponentActivity() {
 
         agentToggleButton?.let { applyAgentToggleState(it, service, animated = true) }
 
-        statusText.text = if (overlay && microphone && accessibility) {
+        statusText.text = if (!bridgeTokenReady) {
+            "Paste the PC PHONE_AGENT_TOKEN in Connection & Config before starting the bridge session."
+        } else if (overlay && microphone && accessibility) {
             "Ready. Start the bubble when your Open Claw bridge is listening."
         } else {
             "Finish the missing permission steps before expecting reliable automation."

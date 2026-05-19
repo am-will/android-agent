@@ -13,6 +13,7 @@ data class AgentConfig(
 )
 
 object AgentConfigStore {
+    private const val KNOWN_WEAK_DEFAULT_TOKEN = "12345678"
     private const val PREFS = "open_claw_agent_config"
     private const val HOST_URL = "host_url"
     private const val DEVICE_ID = "device_id"
@@ -27,7 +28,7 @@ object AgentConfigStore {
         return AgentConfig(
             hostUrl = prefs.getString(HOST_URL, "ws://127.0.0.1:8788/phone") ?: "ws://127.0.0.1:8788/phone",
             deviceId = prefs.getString(DEVICE_ID, "openclaw-agent") ?: "openclaw-agent",
-            token = prefs.getString(TOKEN, "12345678") ?: "12345678",
+            token = sanitizedToken(prefs.getString(TOKEN, "")),
             openAiApiKey = prefs.getString(OPENAI_API_KEY, "") ?: "",
             systemPrompt = prefs.getString(SYSTEM_PROMPT, DefaultSystemPrompt.text) ?: DefaultSystemPrompt.text,
             model = prefs.getString(MODEL, "gpt-5.5") ?: "gpt-5.5",
@@ -46,6 +47,11 @@ object AgentConfigStore {
             .putString(MODEL, config.model)
             .putString(REASONING_EFFORT, config.reasoningEffort)
             .apply()
+    }
+
+    private fun sanitizedToken(value: String?): String {
+        val trimmed = value?.trim().orEmpty()
+        return trimmed.takeUnless { it == KNOWN_WEAK_DEFAULT_TOKEN }.orEmpty()
     }
 }
 

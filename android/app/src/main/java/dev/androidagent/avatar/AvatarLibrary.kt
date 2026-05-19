@@ -74,12 +74,15 @@ object AvatarLibrary {
      * local cache. Returns a [Result] so callers can render an error inline
      * when the user opened the avatar menu and the host can't be reached.
      */
-    fun refreshFromHost(context: Context, hostUrl: String): Result<List<PetAsset>> {
+    fun refreshFromHost(context: Context, hostUrl: String, token: String): Result<List<PetAsset>> {
         val httpBase = deriveHttpBase(hostUrl) ?: return Result.failure(
             IOException("Bridge URL is not set. Configure it under Connection & Config.")
         )
+        val authToken = token.trim().takeIf { it.isNotEmpty() } ?: return Result.failure(
+            IOException("Bridge auth token is not set. Paste the PC PHONE_AGENT_TOKEN in Connection & Config.")
+        )
         return try {
-            val summaries = fetchPetSummaries(httpBase)
+            val summaries = fetchPetSummaries(httpBase, authToken)
             val avatarsDir = File(context.filesDir, AVATARS_DIR).apply { mkdirs() }
             val existing = listCached(context).associateBy { it.id }
             val result = mutableListOf<PetAsset>()
@@ -93,7 +96,7 @@ object AvatarLibrary {
                     !target.exists() ||
                     target.length() != summary.sizeBytes
                 if (needsDownload) {
-                    downloadSpritesheet(httpBase, summary.id, target)
+                    downloadSpritesheet(httpBase, summary.id, authToken, target)
                 }
                 result.add(
                     PetAsset(
@@ -123,9 +126,9 @@ object AvatarLibrary {
      * logged so the user never sees a connection error when the bridge is
      * offline.
      */
-    fun scanOnBoot(context: Context, hostUrl: String) {
+    fun scanOnBoot(context: Context, hostUrl: String, token: String) {
         bootScanExecutor.execute {
-            val result = refreshFromHost(context.applicationContext, hostUrl)
+            val result = refreshFromHost(context.applicationContext, hostUrl, token)
             result.onFailure { Log.i(TAG, "boot scan deferred: ${it.message}") }
         }
     }
@@ -151,8 +154,15 @@ object AvatarLibrary {
         val mtimeMs: Long
     )
 
-    private fun fetchPetSummaries(httpBase: String): List<PetSummary> {
-        val request = Request.Builder().url("$httpBase/api/pets").build()
+    private fun authorizedRequest(url: String, token: String): Request {
+        return Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .build()
+    }
+
+    private fun fetchPetSummaries(httpBase: String, token: String): List<PetSummary> {
+        val request = authorizedRequest("$httpBase/api/pets", token)
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("GET /api/pets responded ${response.code}")
@@ -182,8 +192,8 @@ object AvatarLibrary {
         }
     }
 
-    private fun downloadSpritesheet(httpBase: String, petId: String, target: File) {
-        val request = Request.Builder().url("$httpBase/api/pets/$petId/spritesheet").build()
+    private fun downloadSpritesheet(httpBase: String, petId: String, token: String, target: File) {
+        val request = authorizedRequest("$httpBase/api/pets/$petId/spritesheet", token)
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("GET /api/pets/$petId/spritesheet responded ${response.code}")

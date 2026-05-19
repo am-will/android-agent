@@ -68,7 +68,9 @@ class AgentForegroundService : Service() {
         broadcastRunningState()
         createChannel()
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), foregroundServiceType(includeMicrophone = false))
-        AvatarLibrary.scanOnBoot(applicationContext, AgentConfigStore.load(this).hostUrl)
+        AgentConfigStore.load(this).also { config ->
+            AvatarLibrary.scanOnBoot(applicationContext, config.hostUrl, config.token)
+        }
         voiceTranscriptionManager = VoiceTranscriptionManager(onStateChanged = ::handleTranscriptionState)
         overlayController = OverlayController(
             context = this,
