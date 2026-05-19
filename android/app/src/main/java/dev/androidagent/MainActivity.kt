@@ -26,6 +26,7 @@ import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -337,6 +338,43 @@ class MainActivity : ComponentActivity() {
             showAvatarPickerMenu { avatarSummary.text = currentAvatarSummary() }
         }, stackedParams(DesignTokens.Spacing.sm + 2))
 
+        content.addView(fieldLabel("Bubble size", tokens), stackedParams(DesignTokens.Spacing.lg))
+        content.addView(body("Resize the floating bubble. Drag to preview live.", tokens).apply {
+            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
+        }, stackedParams(DesignTokens.Spacing.xs))
+
+        val sizeValue = TextView(this).apply {
+            setTextColor(tokens.primaryText)
+            textSize = DesignTokens.Text.body
+            text = "${current.bubbleSizeDp} dp"
+            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
+        }
+        content.addView(sizeValue, stackedParams(DesignTokens.Spacing.sm))
+
+        val sizeSeekBar = SeekBar(this).apply {
+            max = 100
+            progress = dpToProgress(current.bubbleSizeDp)
+        }
+        var currentSizeDp = current.bubbleSizeDp
+        var lastAppliedSizeDp = current.bubbleSizeDp
+        sizeSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dpValue = progressToDp(progress)
+                currentSizeDp = dpValue
+                sizeValue.text = "$dpValue dp"
+                if (fromUser && dpValue != lastAppliedSizeDp && AgentForegroundService.isRunning) {
+                    val intent = Intent(this@MainActivity, AgentForegroundService::class.java)
+                        .setAction(AgentForegroundService.ACTION_RESIZE_BUBBLE)
+                        .putExtra(AgentForegroundService.EXTRA_BUBBLE_SIZE_DP, dpValue)
+                    runCatching { ContextCompat.startForegroundService(this@MainActivity, intent) }
+                    lastAppliedSizeDp = dpValue
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        content.addView(sizeSeekBar, stackedParams(DesignTokens.Spacing.sm))
+
         val dialog = AlertDialog.Builder(this)
             .setTitle("Appearance")
             .setView(ScrollView(this).apply {
@@ -345,7 +383,8 @@ class MainActivity : ComponentActivity() {
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Save") { _, _ ->
                 val saved = AppearancePrefs(
-                    panelAnimation = animationOptions.getOrElse(animationSpinner.selectedItemPosition) { animationOptions.first() }.first
+                    panelAnimation = animationOptions.getOrElse(animationSpinner.selectedItemPosition) { animationOptions.first() }.first,
+                    bubbleSizeDp = currentSizeDp
                 )
                 AppearancePrefsStore.save(this, saved)
             }
@@ -365,6 +404,28 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, AgentForegroundService::class.java)
             .setAction(AgentForegroundService.ACTION_REFRESH_AVATAR)
         runCatching { ContextCompat.startForegroundService(this, intent) }
+    }
+
+    private fun progressToDp(progress: Int): Int {
+        val p = progress.coerceIn(0, 100)
+        return if (p <= 50) {
+            OverlayController.MIN_BUBBLE_SIZE_DP +
+                ((OverlayController.DEFAULT_BUBBLE_SIZE_DP - OverlayController.MIN_BUBBLE_SIZE_DP) * p) / 50
+        } else {
+            OverlayController.DEFAULT_BUBBLE_SIZE_DP +
+                ((OverlayController.MAX_BUBBLE_SIZE_DP - OverlayController.DEFAULT_BUBBLE_SIZE_DP) * (p - 50)) / 50
+        }
+    }
+
+    private fun dpToProgress(dp: Int): Int {
+        val clamped = dp.coerceIn(OverlayController.MIN_BUBBLE_SIZE_DP, OverlayController.MAX_BUBBLE_SIZE_DP)
+        return if (clamped <= OverlayController.DEFAULT_BUBBLE_SIZE_DP) {
+            val denom = (OverlayController.DEFAULT_BUBBLE_SIZE_DP - OverlayController.MIN_BUBBLE_SIZE_DP).coerceAtLeast(1)
+            ((clamped - OverlayController.MIN_BUBBLE_SIZE_DP) * 50) / denom
+        } else {
+            val denom = (OverlayController.MAX_BUBBLE_SIZE_DP - OverlayController.DEFAULT_BUBBLE_SIZE_DP).coerceAtLeast(1)
+            50 + ((clamped - OverlayController.DEFAULT_BUBBLE_SIZE_DP) * 50) / denom
+        }
     }
 
     private fun currentAvatarSummary(): String {

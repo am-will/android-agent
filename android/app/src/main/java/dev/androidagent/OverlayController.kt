@@ -221,7 +221,9 @@ class OverlayController(
             })
         }
         bubbleUnreadBadgeView = badge
-        val params = overlayParams(width = dp(88), height = dp(88), focusable = false).apply {
+        val initialBubbleDp = AppearancePrefsStore.load(context).bubbleSizeDp
+            .coerceIn(MIN_BUBBLE_SIZE_DP, MAX_BUBBLE_SIZE_DP)
+        val params = overlayParams(width = dp(initialBubbleDp), height = dp(initialBubbleDp), focusable = false).apply {
             gravity = Gravity.TOP or Gravity.START
             x = lastBubbleX ?: dp(16)
             y = lastBubbleY ?: dp(160)
@@ -399,6 +401,34 @@ class OverlayController(
                 })
             }
             renderBubbleUnreadBadge(lastChatState)
+        }
+    }
+
+    /**
+     * Resize the floating bubble in place. Used by the live-preview slider
+     * in the Appearance dialog. Coerces into [MIN_BUBBLE_SIZE_DP,
+     * MAX_BUBBLE_SIZE_DP] and keeps the bubble inside the screen if it grew
+     * near an edge.
+     */
+    fun refreshBubbleSize(targetDp: Int) {
+        mainHandler.post {
+            val clamped = targetDp.coerceIn(MIN_BUBBLE_SIZE_DP, MAX_BUBBLE_SIZE_DP)
+            val bubble = bubbleView ?: return@post
+            val params = bubbleParams ?: return@post
+            val newSizePx = dp(clamped)
+            if (params.width == newSizePx && params.height == newSizePx) return@post
+            params.width = newSizePx
+            params.height = newSizePx
+            // Clamp using the freshly-set width/height instead of view.width
+            // because the view has not been re-laid out yet.
+            val display = context.resources.displayMetrics
+            val horizontalInset = dp(8)
+            val maxX = (display.widthPixels - newSizePx - horizontalInset).coerceAtLeast(horizontalInset)
+            val maxY = (display.heightPixels - newSizePx - dp(8)).coerceAtLeast(dp(8))
+            params.x = params.x.coerceIn(horizontalInset, maxX)
+            params.y = params.y.coerceIn(dp(8), maxY)
+            runCatching { windowManager.updateViewLayout(bubble, params) }
+            rememberBubblePosition()
         }
     }
 
@@ -2103,7 +2133,7 @@ class OverlayController(
     private fun bubbleScreenCenter(): Pair<Int, Int>? {
         val params = bubbleParams ?: return null
         if (bubbleView == null) return null
-        val size = dp(88)
+        val size = if (params.width > 0) params.width else dp(DEFAULT_BUBBLE_SIZE_DP)
         return (params.x + size / 2) to (params.y + size / 2)
     }
 
@@ -3032,6 +3062,9 @@ class OverlayController(
         private const val MODAL_CLOSE_HOT_ZONE_HEIGHT_DP = 88
         private const val KEYBOARD_HEIGHT_ESTIMATE_FRACTION = 0.485f
         private const val KEYBOARD_COMPOSER_GAP_DP = 4
+        const val MIN_BUBBLE_SIZE_DP = 56
+        const val DEFAULT_BUBBLE_SIZE_DP = 88
+        const val MAX_BUBBLE_SIZE_DP = 132
     }
 
     private fun openSettings() {

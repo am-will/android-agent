@@ -121,6 +121,11 @@ class AgentForegroundService : Service() {
                 overlayController?.refreshBubbleAvatar()
                 return START_STICKY
             }
+            ACTION_RESIZE_BUBBLE -> {
+                val size = intent.getIntExtra(EXTRA_BUBBLE_SIZE_DP, AppearancePrefs.DEFAULT_BUBBLE_SIZE_DP)
+                overlayController?.refreshBubbleSize(size)
+                return START_STICKY
+            }
         }
         overlayController?.show()
         return START_STICKY
@@ -563,6 +568,8 @@ class AgentForegroundService : Service() {
         const val ACTION_OPEN_CHAT = "dev.openclawagent.action.OPEN_CHAT"
         private const val ACTION_OPEN_CHAT_SESSION = "dev.openclawagent.action.OPEN_CHAT_SESSION"
         const val ACTION_REFRESH_AVATAR = "dev.openclawagent.action.REFRESH_AVATAR"
+        const val ACTION_RESIZE_BUBBLE = "dev.openclawagent.action.RESIZE_BUBBLE"
+        const val EXTRA_BUBBLE_SIZE_DP = "dev.openclawagent.extra.BUBBLE_SIZE_DP"
         const val EXTRA_PANEL_PRESENTATION = "panelPresentation"
         const val PANEL_PRESENTATION_POPUP = "popup"
         const val PANEL_PRESENTATION_FULLSCREEN = "fullscreen"
