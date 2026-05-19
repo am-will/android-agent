@@ -11,4 +11,8 @@
         <item name="android:textColorPrimary">#0F172A</item>
         <item name="android:textColorSecondary">#5B6478</item>
     </style>
+
+    <style name="LauncherTheme" parent="@android:style/Theme.NoDisplay">
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>

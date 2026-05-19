@@ -62,27 +62,9 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 10)
         }
-        if (shouldLaunchChatDirectly(intent)) {
-            launchChatModalAndFinish()
-            return
-        }
         buildUi()
         maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
-    }
-
-    private fun shouldLaunchChatDirectly(launchIntent: Intent?): Boolean {
-        if (launchIntent?.getBooleanExtra(EXTRA_SHOW_SETTINGS, false) == true) return false
-        if (!Settings.canDrawOverlays(this)) return false
-        return true
-    }
-
-    private fun launchChatModalAndFinish() {
-        val intent = Intent(this, AgentForegroundService::class.java)
-            .setAction(AgentForegroundService.ACTION_OPEN_CHAT)
-        runCatching { ContextCompat.startForegroundService(this, intent) }
-        finish()
-        overridePendingTransition(0, 0)
     }
 
     override fun onStart() {
@@ -104,10 +86,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (shouldLaunchChatDirectly(intent)) {
-            launchChatModalAndFinish()
-            return
-        }
         maybeRequestMicPermission(intent)
         maybeStartAgentFromIntent(intent)
     }
