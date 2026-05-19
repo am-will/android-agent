@@ -107,6 +107,8 @@ class OverlayController(
     private var bubblePetView: PetAvatarView? = null
     private var bubbleLastDragX: Int? = null
     private var bubbleLastDragSampleMs: Long = 0L
+    private var bubbleHasUnread: Boolean = false
+    private var bubbleIsDragging: Boolean = false
     private var panelView: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var panelScrimView: View? = null
@@ -234,6 +236,7 @@ class OverlayController(
             params = params,
             onDragStart = {
                 showTrashTarget()
+                bubbleIsDragging = true
                 bubbleLastDragX = params.x
                 bubbleLastDragSampleMs = System.currentTimeMillis()
             },
@@ -242,8 +245,9 @@ class OverlayController(
                 updateTrashTargetState(dragParams, dragView)
             },
             onDragEnd = { dragParams, dragView ->
-                bubblePetView?.setState(PetAnimation.State.Idle)
+                bubbleIsDragging = false
                 bubbleLastDragX = null
+                applyBubbleRestingState()
                 val shouldDismiss = updateTrashTargetState(dragParams, dragView)
                 if (shouldDismiss) {
                     dismissPanel(cancelTranscription = false)
@@ -253,8 +257,9 @@ class OverlayController(
                 }
             },
             onDragCancel = {
-                bubblePetView?.setState(PetAnimation.State.Idle)
+                bubbleIsDragging = false
                 bubbleLastDragX = null
+                applyBubbleRestingState()
                 hideTrashTarget()
             }
         ) { togglePanel(PanelPresentation.Popup) }
@@ -263,6 +268,7 @@ class OverlayController(
         bubbleParams = params
         applyBubbleVoiceIndicator(lastVoiceState)
         renderBubbleUnreadBadge(lastChatState)
+        applyBubbleRestingState()
     }
 
     fun hide() {
@@ -401,6 +407,7 @@ class OverlayController(
                 })
             }
             renderBubbleUnreadBadge(lastChatState)
+            applyBubbleRestingState()
         }
     }
 
@@ -1707,8 +1714,10 @@ class OverlayController(
     }
 
     private fun renderBubbleUnreadBadge(state: ChatState) {
-        val badge = bubbleUnreadBadgeView ?: return
         val count = state.totalUnreadReplies
+        bubbleHasUnread = count > 0
+        applyBubbleRestingState()
+        val badge = bubbleUnreadBadgeView ?: return
         if (count <= 0) {
             badge.visibility = View.GONE
             badge.text = ""
@@ -1718,6 +1727,14 @@ class OverlayController(
         badge.text = badgeText(count)
         badge.visibility = View.VISIBLE
         bubbleView?.contentDescription = "Open Claw Agent, $count unread replies"
+    }
+
+    private fun applyBubbleRestingState() {
+        if (bubbleIsDragging) return
+        val pet = bubblePetView ?: return
+        pet.setState(
+            if (bubbleHasUnread) PetAnimation.State.Jumping else PetAnimation.State.Idle
+        )
     }
 
     private fun notifyCurrentChatSessionViewed() {
