@@ -1,6 +1,7 @@
 package dev.androidagent
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -33,12 +34,14 @@ object AgentLocationProvider {
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
+    @SuppressLint("MissingPermission")
     fun currentBestEffortLocation(context: Context): AgentLocation? {
         if (!hasLocationPermission(context)) {
             return null
         }
 
         val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+        // Permission can still be revoked between the check and the call, so each provider read is isolated.
         val location = runCatching {
             manager.getProviders(true)
                 .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
