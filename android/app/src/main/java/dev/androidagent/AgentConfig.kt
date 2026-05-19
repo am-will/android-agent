@@ -60,17 +60,24 @@ enum class PanelAnimationStyle(val key: String) {
 }
 
 data class AppearancePrefs(
-    val panelAnimation: PanelAnimationStyle
-)
+    val panelAnimation: PanelAnimationStyle,
+    val bubbleSizeDp: Int = DEFAULT_BUBBLE_SIZE_DP
+) {
+    companion object {
+        const val DEFAULT_BUBBLE_SIZE_DP = 88
+    }
+}
 
 object AppearancePrefsStore {
     private const val PREFS = "open_claw_agent_appearance"
     private const val PANEL_ANIMATION = "appearance_panel_animation"
+    private const val BUBBLE_SIZE_DP = "appearance_bubble_size_dp"
 
     fun load(context: Context): AppearancePrefs {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return AppearancePrefs(
-            panelAnimation = PanelAnimationStyle.fromKey(prefs.getString(PANEL_ANIMATION, PanelAnimationStyle.Circular.key))
+            panelAnimation = PanelAnimationStyle.fromKey(prefs.getString(PANEL_ANIMATION, PanelAnimationStyle.Circular.key)),
+            bubbleSizeDp = prefs.getInt(BUBBLE_SIZE_DP, AppearancePrefs.DEFAULT_BUBBLE_SIZE_DP)
         )
     }
 
@@ -78,10 +85,15 @@ object AppearancePrefsStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(PANEL_ANIMATION, prefs.panelAnimation.key)
+            .putInt(BUBBLE_SIZE_DP, prefs.bubbleSizeDp)
             .apply()
     }
 
     fun setPanelAnimation(context: Context, style: PanelAnimationStyle) {
         save(context, load(context).copy(panelAnimation = style))
+    }
+
+    fun setBubbleSize(context: Context, dp: Int) {
+        save(context, load(context).copy(bubbleSizeDp = dp))
     }
 }
