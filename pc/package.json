@@ -11,6 +11,7 @@
     "mcp": "tsx src/mcp/androidPhoneServer.ts",
     "openclaw:mcp": "tsx src/scripts/configureOpenClawMcp.ts",
     "phone:usb": "adb reverse tcp:8788 tcp:8788 && adb shell am start -n dev.openclawagent/dev.androidagent.MainActivity --ez startAgent true",
+    "phone:tailscale": "tsx src/scripts/printTailscalePairing.ts",
     "phone:health": "curl -sS http://127.0.0.1:8788/health",
     "demo:open-settings": "tsx src/scripts/sendCommand.ts open_app '{\"appName\":\"Settings\"}'",
     "demo:agent": "tsx src/scripts/sendUserRequest.ts",

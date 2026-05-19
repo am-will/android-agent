@@ -7,7 +7,7 @@ Requirements:
 - Node.js 24+
 - OpenClaw CLI 2026.5.7+ installed and configured on the PC that should do the delegated work
 - Codex CLI with `codex app-server` only if exercising the copied legacy dispatcher
-- Same network reachability from phone to PC
+- Same network reachability from phone to PC, either local Wi-Fi or Tailscale for off-LAN use
 - Gradle or Android Studio for Android builds
 
 Install, register the optional phone-control MCP server with OpenClaw, and start the bridge:
@@ -15,7 +15,8 @@ Install, register the optional phone-control MCP server with OpenClaw, and start
 ```bash
 cd pc
 npm install
-export PHONE_AGENT_TOKEN=12345678
+export PHONE_AGENT_TOKEN="$(openssl rand -hex 32)"
+echo "Android token: $PHONE_AGENT_TOKEN"
 export PHONE_AGENT_DEFAULT_DEVICE=openclaw-agent
 export PHONE_AGENT_DISPATCHER=openclaw
 export OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
@@ -33,11 +34,22 @@ openclaw gateway start
 
 Set `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD` if your Gateway requires shared-secret authentication and the bridge cannot read it from `OPENCLAW_CONFIG_PATH` or `~/.openclaw/openclaw.json`. The older `openclaw agent --json` adapter remains available as a fallback for legacy `user_request` paths and realtime delegated tasks.
 
+`PHONE_AGENT_TOKEN` is the Android-to-bridge pairing secret. Generate it yourself with `openssl rand -hex 32`; it is not a Tailscale, OpenAI, or OpenClaw token. To enter it on Android, open **Open Claw Agent**, tap **Open Connection & Config**, find the **Bridge** section, paste the printed value into **Auth token**, then tap **Save**.
+
 The bridge exposes:
 
 - `ws://0.0.0.0:8788/phone` for Android
 - `http://127.0.0.1:8788/health` for local status
 - `POST http://127.0.0.1:8788/api/phone/default/command` for the optional `android-phone` tool adapter
+
+For off-LAN use, keep `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789` and put only the phone-facing bridge on Tailscale. Run:
+
+```bash
+cd pc
+npm run phone:tailscale
+```
+
+Then use the printed `ws://<pc-tailnet-name-or-ip>:8788/phone` URL in Android. Do not expose OpenClaw Gateway or app-server transports directly to the internet.
 
 The realtime voice path is separate from the task dispatcher: Android starts the WebRTC call, the PC bridge creates the OpenAI Realtime session, and completed realtime intents route to OpenClaw by default. Phone-control tool calls are only one possible capability of that OpenClaw session.
 
@@ -45,7 +57,7 @@ The realtime voice path is separate from the task dispatcher: Android starts the
 
 Open `android/` in Android Studio or run Gradle from that directory. Install the app on the device, then:
 
-1. Save the WebSocket URL, device ID, token, and OpenAI API key if you want realtime voice or composer transcription.
+1. Open **Open Connection & Config** and save the **WebSocket URL**, **Device ID**, **Auth token**, and **OpenAI API key for realtime voice** if you want realtime voice or composer transcription.
 2. Grant overlay permission.
 3. If Android shows **Restricted setting**, open **Settings > Apps > Open Claw Agent**, use the three-dot menu, choose **Allow restricted settings**, and authenticate.
 4. Enable **Settings > Accessibility > Installed apps > Open Claw Agent**.
