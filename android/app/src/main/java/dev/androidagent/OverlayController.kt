@@ -46,6 +46,11 @@ import android.widget.Space
 import android.widget.TextView
 import android.widget.FrameLayout
 import androidx.core.view.isNotEmpty
+import dev.androidagent.avatar.AvatarConfigStore
+import dev.androidagent.avatar.AvatarLibrary
+import dev.androidagent.avatar.AvatarSelection
+import dev.androidagent.avatar.PetAnimation
+import dev.androidagent.avatar.PetAvatarView
 import dev.androidagent.chat.ChatModelOption
 import dev.androidagent.chat.ChatSessionRow
 import dev.androidagent.chat.ChatTimelineKind
@@ -99,6 +104,9 @@ class OverlayController(
     private var bubblePulseAnimator: AnimatorSet? = null
     private var lastBubbleX: Int? = null
     private var lastBubbleY: Int? = null
+    private var bubblePetView: PetAvatarView? = null
+    private var bubbleLastDragX: Int? = null
+    private var bubbleLastDragSampleMs: Long = 0L
     private var panelView: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var panelScrimView: View? = null
@@ -191,6 +199,7 @@ class OverlayController(
             includeFontPadding = false
             setPadding(dp(4), 0, dp(4), 0)
         }
+        val avatarView = buildBubbleAvatarView()
         val bubble = FrameLayout(context).apply {
             background = bubbleBackgroundForVoiceState(lastVoiceState, tokens)
             contentDescription = "Open Claw Agent"
@@ -198,16 +207,7 @@ class OverlayController(
             isClickable = true
             isFocusable = true
             setOnClickListener { togglePanel(PanelPresentation.Popup) }
-            addView(ImageView(context).apply {
-                setImageResource(R.drawable.openclaw_bubble_logo)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setPadding(
-                    dp(DesignTokens.Spacing.md),
-                    dp(DesignTokens.Spacing.md),
-                    dp(DesignTokens.Spacing.md),
-                    dp(DesignTokens.Spacing.md)
-                )
-            }, FrameLayout.LayoutParams(
+            addView(avatarView, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             ))
@@ -230,9 +230,18 @@ class OverlayController(
         attachDrag(
             view = bubble,
             params = params,
-            onDragStart = { showTrashTarget() },
-            onDrag = { dragParams, dragView -> updateTrashTargetState(dragParams, dragView) },
+            onDragStart = {
+                showTrashTarget()
+                bubbleLastDragX = params.x
+                bubbleLastDragSampleMs = System.currentTimeMillis()
+            },
+            onDrag = { dragParams, dragView ->
+                updateBubbleAvatarForDrag(dragParams.x)
+                updateTrashTargetState(dragParams, dragView)
+            },
             onDragEnd = { dragParams, dragView ->
+                bubblePetView?.setState(PetAnimation.State.Idle)
+                bubbleLastDragX = null
                 val shouldDismiss = updateTrashTargetState(dragParams, dragView)
                 if (shouldDismiss) {
                     dismissPanel(cancelTranscription = false)
@@ -241,7 +250,11 @@ class OverlayController(
                     hideTrashTarget()
                 }
             },
-            onDragCancel = { hideTrashTarget() }
+            onDragCancel = {
+                bubblePetView?.setState(PetAnimation.State.Idle)
+                bubbleLastDragX = null
+                hideTrashTarget()
+            }
         ) { togglePanel(PanelPresentation.Popup) }
         windowManager.addView(bubble, params)
         bubbleView = bubble
@@ -263,6 +276,8 @@ class OverlayController(
         bubbleView = null
         bubbleUnreadBadgeView = null
         bubbleParams = null
+        bubblePetView = null
+        bubbleLastDragX = null
     }
 
     fun suppressAgentChromeForAutomation() {
@@ -290,6 +305,8 @@ class OverlayController(
         bubbleView = null
         bubbleUnreadBadgeView = null
         bubbleParams = null
+        bubblePetView = null
+        bubbleLastDragX = null
         removeTrashTarget()
     }
 
@@ -2557,6 +2574,53 @@ class OverlayController(
         }
     }
 
+    private fun buildBubbleAvatarView(): View {
+        bubblePetView = null
+        val selection = AvatarConfigStore.load(context)
+        if (selection is AvatarSelection.Pet) {
+            val asset = AvatarLibrary.findCached(context, selection.id)
+            val file = asset?.spritesheetFile
+            if (file != null && file.exists()) {
+                val view = PetAvatarView(context)
+                if (view.loadFromFile(file)) {
+                    bubblePetView = view
+                    return view
+                }
+            }
+        }
+        return ImageView(context).apply {
+            setImageResource(R.drawable.openclaw_bubble_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.md),
+                dp(DesignTokens.Spacing.md)
+            )
+        }
+    }
+
+    private fun updateBubbleAvatarForDrag(currentX: Int) {
+        val pet = bubblePetView ?: return
+        val previousX = bubbleLastDragX
+        val now = System.currentTimeMillis()
+        if (previousX == null) {
+            bubbleLastDragX = currentX
+            bubbleLastDragSampleMs = now
+            return
+        }
+        val dx = currentX - previousX
+        if (now - bubbleLastDragSampleMs >= DRAG_DIRECTION_SAMPLE_INTERVAL_MS || kotlin.math.abs(dx) >= DRAG_DIRECTION_PIXEL_THRESHOLD) {
+            if (dx > DRAG_DIRECTION_PIXEL_THRESHOLD) {
+                pet.setState(PetAnimation.State.RunningRight)
+            } else if (dx < -DRAG_DIRECTION_PIXEL_THRESHOLD) {
+                pet.setState(PetAnimation.State.RunningLeft)
+            }
+            bubbleLastDragX = currentX
+            bubbleLastDragSampleMs = now
+        }
+    }
+
     private fun updateBubblePulse(isSpeaking: Boolean) {
         val bubble = bubbleView
         if (!isSpeaking || bubble == null) {
@@ -2930,6 +2994,8 @@ class OverlayController(
         private const val TRASH_TARGET_PULSE_MS = 55L
         private const val TRASH_TARGET_SHRINK_MS = 140L
         private const val TRASH_TARGET_HIDDEN_SCALE = 0.82f
+        private const val DRAG_DIRECTION_SAMPLE_INTERVAL_MS = 80L
+        private const val DRAG_DIRECTION_PIXEL_THRESHOLD = 3
         private const val VOICE_PULSE_MS = 720L
         private const val VOICE_MODAL_MAX_SCREEN_FRACTION = 0.40f
         private const val CHAT_MODAL_HEIGHT_FRACTION = 0.82f
