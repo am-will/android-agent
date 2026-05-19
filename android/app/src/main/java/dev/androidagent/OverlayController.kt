@@ -108,6 +108,7 @@ class OverlayController(
     private var bubbleLastDragX: Int? = null
     private var bubbleLastDragSampleMs: Long = 0L
     private var bubbleHasUnread: Boolean = false
+    private var bubbleIsWorking: Boolean = false
     private var bubbleIsDragging: Boolean = false
     private var panelView: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
@@ -267,6 +268,7 @@ class OverlayController(
         bubbleView = bubble
         bubbleParams = params
         applyBubbleVoiceIndicator(lastVoiceState)
+        bubbleIsWorking = lastChatState.isRunning
         renderBubbleUnreadBadge(lastChatState)
         applyBubbleRestingState()
     }
@@ -362,8 +364,10 @@ class OverlayController(
     fun setChatState(state: ChatState) {
         lastChatState = state
         mainHandler.post {
+            bubbleIsWorking = state.isRunning
             renderChatState(state)
             renderBubbleUnreadBadge(state)
+            applyBubbleRestingState()
             state.status?.let { setStatus(it) }
             state.error?.let { setStatus(it) }
             if (panelView != null) {
@@ -1732,9 +1736,12 @@ class OverlayController(
     private fun applyBubbleRestingState() {
         if (bubbleIsDragging) return
         val pet = bubblePetView ?: return
-        pet.setState(
-            if (bubbleHasUnread) PetAnimation.State.Jumping else PetAnimation.State.Idle
-        )
+        val resting = when {
+            bubbleIsWorking -> PetAnimation.State.Review
+            bubbleHasUnread -> PetAnimation.State.Jumping
+            else -> PetAnimation.State.Idle
+        }
+        pet.setState(resting)
     }
 
     private fun notifyCurrentChatSessionViewed() {
