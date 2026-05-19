@@ -21,6 +21,9 @@ interface RealtimeTaskManagerOptions {
   audit?: AuditLog;
   maxQueueSize?: number;
   taskTimeoutMs?: number;
+  completedResultTtlMs?: number;
+  maxCompletedResults?: number;
+  now?: () => number;
 }
 
 interface QueuedTask {
@@ -36,11 +39,18 @@ interface DeviceTaskState {
   queue: QueuedTask[];
   completed: number;
   failed: number;
-  completedResults: Map<string, RealtimeToolResultMessage>;
+  completedResults: Map<string, CompletedResult>;
+}
+
+interface CompletedResult {
+  message: RealtimeToolResultMessage;
+  completedAtMs: number;
 }
 
 const DEFAULT_MAX_QUEUE_SIZE = 3;
 const DEFAULT_TASK_TIMEOUT_MS = 120_000;
+const DEFAULT_COMPLETED_RESULT_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_COMPLETED_RESULTS = 100;
 const MAX_INSTRUCTION_LENGTH = 4_000;
 const MAX_WEB_SEARCH_QUERY_LENGTH = 1_000;
 
@@ -48,10 +58,16 @@ export class RealtimeTaskManager {
   private readonly states = new Map<string, DeviceTaskState>();
   private readonly maxQueueSize: number;
   private readonly taskTimeoutMs: number;
+  private readonly completedResultTtlMs: number;
+  private readonly maxCompletedResults: number;
+  private readonly now: () => number;
 
   constructor(private readonly options: RealtimeTaskManagerOptions) {
     this.maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
     this.taskTimeoutMs = options.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+    this.completedResultTtlMs = options.completedResultTtlMs ?? DEFAULT_COMPLETED_RESULT_TTL_MS;
+    this.maxCompletedResults = options.maxCompletedResults ?? DEFAULT_MAX_COMPLETED_RESULTS;
+    this.now = options.now ?? Date.now;
   }
 
   async handleToolCall(message: RealtimeToolCallMessage): Promise<void> {
@@ -469,7 +485,8 @@ export class RealtimeTaskManager {
     if (state.queue.some((task) => task.callId === callId)) {
       return "queued";
     }
-    return state.completedResults.get(callId);
+    this.pruneCompletedResults(state);
+    return state.completedResults.get(callId)?.message;
   }
 
   private sendResult(deviceId: string, result: Omit<RealtimeToolResultMessage, "type" | "deviceId">): void {
@@ -484,7 +501,12 @@ export class RealtimeTaskManager {
       deviceId,
       ...result
     };
-    state.completedResults.set(result.callId, message);
+    this.pruneCompletedResults(state);
+    state.completedResults.set(result.callId, {
+      message,
+      completedAtMs: this.now()
+    });
+    this.pruneCompletedResults(state);
     this.options.audit?.record("realtime_task_result", deviceId, message);
     this.options.sendRealtime(deviceId, message);
     this.sendStatus(deviceId);
@@ -515,6 +537,22 @@ export class RealtimeTaskManager {
       this.states.set(deviceId, state);
     }
     return state;
+  }
+
+  private pruneCompletedResults(state: DeviceTaskState): void {
+    const cutoff = this.now() - this.completedResultTtlMs;
+    for (const [callId, result] of state.completedResults) {
+      if (result.completedAtMs < cutoff) {
+        state.completedResults.delete(callId);
+      }
+    }
+    while (state.completedResults.size > this.maxCompletedResults) {
+      const oldest = state.completedResults.keys().next().value;
+      if (!oldest) {
+        break;
+      }
+      state.completedResults.delete(oldest);
+    }
   }
 
   private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

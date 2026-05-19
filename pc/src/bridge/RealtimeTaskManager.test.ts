@@ -80,13 +80,15 @@ function namedToolCall(callId: string, name: string, args: Record<string, unknow
   };
 }
 
-function createHarness(options: { taskTimeoutMs?: number } = {}) {
+function createHarness(options: { taskTimeoutMs?: number; completedResultTtlMs?: number; now?: () => number } = {}) {
   const dispatcher = new FakeDispatcher();
   const messages: RealtimeOutboundMessage[] = [];
   const manager = new RealtimeTaskManager({
     dispatcher,
     sendRealtime: (_deviceId, message) => messages.push(message),
-    taskTimeoutMs: options.taskTimeoutMs
+    taskTimeoutMs: options.taskTimeoutMs,
+    completedResultTtlMs: options.completedResultTtlMs,
+    now: options.now
   });
   return { dispatcher, manager, messages };
 }
@@ -179,6 +181,28 @@ test("ignores duplicate call IDs while active", async () => {
 
   assert.deepEqual(dispatcher.requests.map((request) => request.text), ["Open Settings"]);
   first.resolve({ finalMessage: "Settings opened" });
+});
+
+test("replays completed duplicate call IDs only within the result TTL", async () => {
+  let now = 1_000;
+  const { dispatcher, manager, messages } = createHarness({
+    completedResultTtlMs: 10,
+    now: () => now
+  });
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  await waitFor(() => results(messages).some((message) => message.callId === "call_1"));
+  const completedCount = results(messages).length;
+
+  await manager.handleToolCall(toolCall("call_1", "Open Settings"));
+  assert.equal(dispatcher.requests.length, 1);
+  assert.equal(results(messages).length, completedCount + 1);
+
+  now += 11;
+  await manager.handleToolCall(toolCall("call_1", "Open Settings again"));
+  await waitFor(() => dispatcher.requests.length === 2);
+
+  assert.equal(results(messages).at(-1)?.status, "completed");
 });
 
 test("times out and stops a hung task", async () => {
