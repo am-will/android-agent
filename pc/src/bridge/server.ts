@@ -3,6 +3,13 @@ import { WebSocketServer } from "ws";
 import { AuditLog } from "./AuditLog.js";
 import { Dispatcher } from "../dispatcher/dispatcher.js";
 import { OpenClawChatBridge } from "./OpenClawChatBridge.js";
+import {
+  getPetSpritesheet,
+  listPets,
+  openSpritesheetStream,
+  resolvePetsDir,
+  spritesheetEtag
+} from "./PetCatalog.js";
 import { OpenAiRealtimeClient, type OpenAiRealtimeSession } from "./OpenAiRealtimeClient.js";
 import { OpenAiWebSearchClient } from "./OpenAiWebSearchClient.js";
 import { RealtimeTaskManager } from "./RealtimeTaskManager.js";
@@ -206,6 +213,41 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
       text
     });
     json(res, result.error ? 502 : 200, { ok: !result.error, result });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/pets") {
+    const pets = await listPets(resolvePetsDir());
+    json(res, 200, { pets });
+    return;
+  }
+
+  const petsSpritesheetMatch = url.pathname.match(/^\/api\/pets\/([^/]+)\/spritesheet$/);
+  if (req.method === "GET" && petsSpritesheetMatch) {
+    const petId = decodeURIComponent(petsSpritesheetMatch[1] ?? "");
+    const info = await getPetSpritesheet(petId, resolvePetsDir());
+    if (!info) {
+      json(res, 404, { ok: false, error: "pet not found" });
+      return;
+    }
+    const etag = spritesheetEtag(info);
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, { etag });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": "image/webp",
+      "content-length": info.sizeBytes,
+      "cache-control": "no-cache",
+      etag
+    });
+    const stream = openSpritesheetStream(info);
+    stream.on("error", (error) => {
+      console.warn(`[pets] failed to stream spritesheet for ${petId}: ${error instanceof Error ? error.message : String(error)}`);
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
+    });
+    stream.pipe(res);
     return;
   }
 
