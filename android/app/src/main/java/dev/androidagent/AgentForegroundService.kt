@@ -81,7 +81,6 @@ class AgentForegroundService : Service() {
             sendStart = { sdp, config -> webSocketClient?.sendRealtimeStart(sdp, config, AgentLocationProvider.currentBestEffortLocation(this)) },
             sendStop = { reason ->
                 webSocketClient?.sendRealtimeStop(reason)
-                webSocketClient?.sendStopRequest(reason)
             },
             sendToolCall = { call -> webSocketClient?.sendRealtimeToolCall(call, AgentConfigStore.load(this)) },
             onStateChanged = { state -> overlayController?.setVoiceState(state) }
