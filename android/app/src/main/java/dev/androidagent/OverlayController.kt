@@ -873,7 +873,7 @@ class OverlayController(
             drawableRes = R.drawable.ic_close,
             contentDescription = "Close chat",
             compact = true
-        ) { dismissPanel(force = true) }
+        ) { dismissPanel() }
 
         val handleArea = if (presentation == PanelPresentation.Popup) {
             val handle = View(context).apply {
