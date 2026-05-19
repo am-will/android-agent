@@ -308,19 +308,38 @@ class AccessibilityCommandExecutor(
             return@withAgentChromeSuppressed CommandResult(false, observer.observe(service), "Screenshots require Android API 30+")
         }
         val encoded = suspendCancellableCoroutine<EncodedScreenshot?> { continuation ->
-            service.takeScreenshot(
-                Display.DEFAULT_DISPLAY,
-                Executors.newSingleThreadExecutor(),
-                object : AccessibilityService.TakeScreenshotCallback {
-                    override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
-                        continuation.resume(encodeScreenshot(screenshot.hardwareBuffer, screenshot.colorSpace))
-                    }
+            val screenshotExecutor = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "OpenClaw-Screenshot").apply { isDaemon = true }
+            }
+            continuation.invokeOnCancellation {
+                screenshotExecutor.shutdownNow()
+            }
+            try {
+                service.takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    screenshotExecutor,
+                    object : AccessibilityService.TakeScreenshotCallback {
+                        override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                            screenshotExecutor.shutdown()
+                            if (continuation.isActive) {
+                                continuation.resume(encodeScreenshot(screenshot.hardwareBuffer, screenshot.colorSpace))
+                            } else {
+                                screenshot.hardwareBuffer.close()
+                            }
+                        }
 
-                    override fun onFailure(errorCode: Int) {
-                        continuation.resume(null)
+                        override fun onFailure(errorCode: Int) {
+                            screenshotExecutor.shutdown()
+                            if (continuation.isActive) {
+                                continuation.resume(null)
+                            }
+                        }
                     }
-                }
-            )
+                )
+            } catch (error: Throwable) {
+                screenshotExecutor.shutdownNow()
+                throw error
+            }
         }
         if (encoded != null) {
             CommandResult(
