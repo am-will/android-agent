@@ -30,6 +30,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewAnimationUtils
 import android.view.ViewConfiguration
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -65,6 +66,8 @@ import dev.androidagent.voice.VoiceRuntimeState
 import dev.androidagent.voice.VoiceRuntimeStatus
 import dev.androidagent.voice.transcription.VoiceTranscriptionState
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 class OverlayController(
@@ -117,6 +120,10 @@ class OverlayController(
     private var lastVoiceState = VoiceRuntimeState()
     private var voiceSurfaceForceHidden = false
     private var panelDismissAnimating = false
+    private var panelOpenAnimator: Animator? = null
+    private var panelScrimOpenAnimator: Animator? = null
+    private var panelCloseAnimator: Animator? = null
+    private var panelScrimCloseAnimator: Animator? = null
     private var suppressNextPanelViewedCallback = false
     private var lastChatState = ChatState()
     private var showToolCalls = true
@@ -686,18 +693,7 @@ class OverlayController(
         panelView = host
         panelParams = params
 
-        // Slide in from the bottom.
-        host.post {
-            val startOffset = (host.height.takeIf { it > 0 } ?: defaultBounds.height).toFloat()
-            host.translationY = startOffset
-            host.animate()
-                .translationY(0f)
-                .setDuration(220L)
-                .setInterpolator(android.view.animation.DecelerateInterpolator())
-                .start()
-        }
-        scrim.alpha = 0f
-        scrim.animate().alpha(1f).setDuration(180L).start()
+        runPanelOpenAnimation(host, scrim, appearancePrefs(), defaultBounds.height)
 
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
@@ -2054,6 +2050,267 @@ class OverlayController(
         }
     }
 
+    private data class RevealCenter(val cx: Int, val cy: Int, val bubbleRadius: Float)
+
+    private fun appearancePrefs(): AppearancePrefs = AppearancePrefsStore.load(context)
+
+    private fun bubbleScreenCenter(): Pair<Int, Int>? {
+        val params = bubbleParams ?: return null
+        if (bubbleView == null) return null
+        val size = dp(88)
+        return (params.x + size / 2) to (params.y + size / 2)
+    }
+
+    private fun screenCenterFallback(): Pair<Int, Int> {
+        val display = context.resources.displayMetrics
+        return (display.widthPixels / 2) to (display.heightPixels / 2)
+    }
+
+    private fun revealCenterForPanel(panelParams: WindowManager.LayoutParams?): RevealCenter {
+        val panelY = panelParams?.y ?: 0
+        val bubble = bubbleScreenCenter()
+        if (bubble != null) {
+            return RevealCenter(bubble.first, bubble.second - panelY, dp(44).toFloat())
+        }
+        val fallback = screenCenterFallback()
+        return RevealCenter(fallback.first, fallback.second - panelY, 0f)
+    }
+
+    private fun revealCenterForScrim(): RevealCenter {
+        val bubble = bubbleScreenCenter()
+        if (bubble != null) {
+            return RevealCenter(bubble.first, bubble.second, dp(44).toFloat())
+        }
+        val fallback = screenCenterFallback()
+        return RevealCenter(fallback.first, fallback.second, 0f)
+    }
+
+    private fun maxRevealRadius(view: View, cx: Int, cy: Int): Float {
+        val width = view.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
+        val height = view.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
+        val dx = max(cx, width - cx).toFloat()
+        val dy = max(cy, height - cy).toFloat()
+        return hypot(dx, dy)
+    }
+
+    private fun cancelPanelOpenAnimators() {
+        panelOpenAnimator?.cancel()
+        panelOpenAnimator = null
+        panelScrimOpenAnimator?.cancel()
+        panelScrimOpenAnimator = null
+    }
+
+    private fun cancelPanelCloseAnimators() {
+        panelCloseAnimator?.cancel()
+        panelCloseAnimator = null
+        panelScrimCloseAnimator?.cancel()
+        panelScrimCloseAnimator = null
+    }
+
+    private fun runPanelOpenAnimation(
+        host: View,
+        scrim: View,
+        prefs: AppearancePrefs,
+        defaultHeight: Int
+    ) {
+        cancelPanelOpenAnimators()
+        when (prefs.panelAnimation) {
+            PanelAnimationStyle.Slide -> {
+                host.post {
+                    val startOffset = (host.height.takeIf { it > 0 } ?: defaultHeight).toFloat()
+                    host.translationY = startOffset
+                    host.animate()
+                        .translationY(0f)
+                        .setDuration(220L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+                }
+                scrim.alpha = 0f
+                scrim.animate().alpha(1f).setDuration(180L).start()
+            }
+            PanelAnimationStyle.Circular -> {
+                host.translationY = 0f
+                host.visibility = View.INVISIBLE
+                scrim.alpha = 0f
+                scrim.visibility = View.INVISIBLE
+                host.post {
+                    if (!host.isAttachedToWindow || host.width == 0 || host.height == 0) {
+                        host.visibility = View.VISIBLE
+                        return@post
+                    }
+                    val center = revealCenterForPanel(panelParams)
+                    val finalRadius = maxRevealRadius(host, center.cx, center.cy)
+                    host.visibility = View.VISIBLE
+                    val anim = ViewAnimationUtils.createCircularReveal(
+                        host,
+                        center.cx,
+                        center.cy,
+                        center.bubbleRadius,
+                        finalRadius
+                    ).apply {
+                        duration = 280L
+                        interpolator = DecelerateInterpolator()
+                        addListener(object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) {
+                                if (panelOpenAnimator === animation) {
+                                    panelOpenAnimator = null
+                                }
+                            }
+                        })
+                    }
+                    panelOpenAnimator = anim
+                    anim.start()
+                }
+                scrim.post {
+                    if (!scrim.isAttachedToWindow) {
+                        scrim.alpha = 1f
+                        scrim.visibility = View.VISIBLE
+                        return@post
+                    }
+                    when (prefs.scrimAnimation) {
+                        PanelScrimStyle.Ripple -> {
+                            if (scrim.width == 0 || scrim.height == 0) {
+                                scrim.alpha = 1f
+                                scrim.visibility = View.VISIBLE
+                                return@post
+                            }
+                            val center = revealCenterForScrim()
+                            val finalRadius = maxRevealRadius(scrim, center.cx, center.cy)
+                            scrim.alpha = 1f
+                            scrim.visibility = View.VISIBLE
+                            val anim = ViewAnimationUtils.createCircularReveal(
+                                scrim,
+                                center.cx,
+                                center.cy,
+                                center.bubbleRadius,
+                                finalRadius
+                            ).apply {
+                                duration = 280L
+                                interpolator = DecelerateInterpolator()
+                                addListener(object : AnimatorListenerAdapter() {
+                                    override fun onAnimationEnd(animation: Animator) {
+                                        if (panelScrimOpenAnimator === animation) {
+                                            panelScrimOpenAnimator = null
+                                        }
+                                    }
+                                })
+                            }
+                            panelScrimOpenAnimator = anim
+                            anim.start()
+                        }
+                        PanelScrimStyle.Fade -> {
+                            scrim.alpha = 0f
+                            scrim.visibility = View.VISIBLE
+                            scrim.animate().alpha(1f).setDuration(180L).start()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun runPanelCloseAnimation(
+        host: View,
+        scrim: View?,
+        prefs: AppearancePrefs,
+        onEnd: () -> Unit
+    ) {
+        cancelPanelCloseAnimators()
+        when (prefs.panelAnimation) {
+            PanelAnimationStyle.Slide -> {
+                val translate = host.height.takeIf { it > 0 }?.toFloat()
+                    ?: context.resources.displayMetrics.heightPixels.toFloat()
+                host.animate()
+                    .translationY(translate)
+                    .setDuration(220L)
+                    .setInterpolator(AccelerateInterpolator())
+                    .withEndAction(onEnd)
+                    .start()
+                scrim?.animate()
+                    ?.alpha(0f)
+                    ?.setDuration(220L)
+                    ?.start()
+            }
+            PanelAnimationStyle.Circular -> {
+                if (host.width == 0 || host.height == 0 || !host.isAttachedToWindow) {
+                    onEnd()
+                    return
+                }
+                val center = revealCenterForPanel(panelParams)
+                val startRadius = maxRevealRadius(host, center.cx, center.cy)
+                val anim = ViewAnimationUtils.createCircularReveal(
+                    host,
+                    center.cx,
+                    center.cy,
+                    startRadius,
+                    center.bubbleRadius
+                ).apply {
+                    duration = 240L
+                    interpolator = AccelerateInterpolator()
+                    addListener(object : AnimatorListenerAdapter() {
+                        private var ended = false
+                        override fun onAnimationEnd(animation: Animator) {
+                            if (panelCloseAnimator === animation) {
+                                panelCloseAnimator = null
+                            }
+                            if (!ended) {
+                                ended = true
+                                onEnd()
+                            }
+                        }
+
+                        override fun onAnimationCancel(animation: Animator) {
+                            if (panelCloseAnimator === animation) {
+                                panelCloseAnimator = null
+                            }
+                            if (!ended) {
+                                ended = true
+                                onEnd()
+                            }
+                        }
+                    })
+                }
+                panelCloseAnimator = anim
+                anim.start()
+
+                if (scrim != null && scrim.isAttachedToWindow && scrim.width > 0 && scrim.height > 0) {
+                    when (prefs.scrimAnimation) {
+                        PanelScrimStyle.Ripple -> {
+                            val scrimCenter = revealCenterForScrim()
+                            val scrimStart = maxRevealRadius(scrim, scrimCenter.cx, scrimCenter.cy)
+                            val scrimAnim = ViewAnimationUtils.createCircularReveal(
+                                scrim,
+                                scrimCenter.cx,
+                                scrimCenter.cy,
+                                scrimStart,
+                                scrimCenter.bubbleRadius
+                            ).apply {
+                                duration = 240L
+                                interpolator = AccelerateInterpolator()
+                                addListener(object : AnimatorListenerAdapter() {
+                                    override fun onAnimationEnd(animation: Animator) {
+                                        if (panelScrimCloseAnimator === animation) {
+                                            panelScrimCloseAnimator = null
+                                        }
+                                        scrim.alpha = 0f
+                                    }
+                                })
+                            }
+                            panelScrimCloseAnimator = scrimAnim
+                            scrimAnim.start()
+                        }
+                        PanelScrimStyle.Fade -> {
+                            scrim.animate()
+                                .alpha(0f)
+                                .setDuration(220L)
+                                .start()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun dismissPanel(cancelTranscription: Boolean = true, force: Boolean = false) {
         if (cancelTranscription && lastTranscriptionState.isRecording) {
             onCancelTranscription()
@@ -2068,6 +2325,8 @@ class OverlayController(
             return
         }
         if (force) {
+            cancelPanelOpenAnimators()
+            cancelPanelCloseAnimators()
             panel.animate().cancel()
             scrim?.animate()?.cancel()
             finalizePanelDismiss()
@@ -2077,27 +2336,19 @@ class OverlayController(
             return
         }
         panelDismissAnimating = true
+        cancelPanelOpenAnimators()
 
-        val translate = panel.height.takeIf { it > 0 }?.toFloat()
-            ?: context.resources.displayMetrics.heightPixels.toFloat()
-        panel.animate()
-            .translationY(translate)
-            .setDuration(220L)
-            .setInterpolator(android.view.animation.AccelerateInterpolator())
-            .withEndAction {
-                panelDismissAnimating = false
-                finalizePanelDismiss()
-            }
-            .start()
-        scrim?.animate()
-            ?.alpha(0f)
-            ?.setDuration(220L)
-            ?.start()
+        runPanelCloseAnimation(panel, scrim, appearancePrefs()) {
+            panelDismissAnimating = false
+            finalizePanelDismiss()
+        }
     }
 
     private fun finalizePanelDismiss() {
         val dismissedPresentation = activePanelPresentation
         panelDismissAnimating = false
+        cancelPanelOpenAnimators()
+        cancelPanelCloseAnimators()
         detachOverlayView(panelView)
         detachOverlayView(panelScrimView)
         panelView = null
