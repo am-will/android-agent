@@ -1,6 +1,14 @@
 import { join } from "node:path";
 import type { PhoneCommand, PhoneCommandResult } from "../protocol/messages.js";
 
+export function bridgeAuthHeaders(token = process.env.PHONE_AGENT_TOKEN): Record<string, string> {
+  const trimmed = token?.trim();
+  if (!trimmed) {
+    throw new Error("PHONE_AGENT_TOKEN is required to call protected bridge HTTP APIs.");
+  }
+  return { authorization: `Bearer ${trimmed}` };
+}
+
 export class PhoneToolClient {
   constructor(private readonly bridgeUrl = process.env.PHONE_AGENT_BRIDGE_URL ?? "http://127.0.0.1:8788") {}
 
@@ -9,7 +17,7 @@ export class PhoneToolClient {
     const timeout = setTimeout(() => controller.abort(), timeoutMs + 5_000);
     const response = await fetch(`${this.bridgeUrl}/api/phone/default/command`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...bridgeAuthHeaders() },
       body: JSON.stringify({ command, args, timeoutMs }),
       signal: controller.signal
     }).finally(() => clearTimeout(timeout));
