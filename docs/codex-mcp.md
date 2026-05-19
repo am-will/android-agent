@@ -6,7 +6,9 @@ Run the PC bridge first:
 
 ```bash
 cd pc
-PHONE_AGENT_TOKEN=12345678 npm run bridge
+export PHONE_AGENT_TOKEN="$(openssl rand -hex 32)"
+echo "Android token: $PHONE_AGENT_TOKEN"
+npm run bridge
 ```
 
 For project-scoped Codex config, create `.codex/config.toml` with paths for your checkout:
@@ -22,6 +24,7 @@ tool_timeout_sec = 60
 
 [mcp_servers.android-phone.env]
 PHONE_AGENT_BRIDGE_URL = "http://127.0.0.1:8788"
+PHONE_AGENT_TOKEN = "<same-token-saved-in-android>"
 ```
 
 Codex only loads project `.codex/config.toml` for trusted projects. To make the server available immediately through the official CLI-managed config, run:
@@ -29,6 +32,7 @@ Codex only loads project `.codex/config.toml` for trusted projects. To make the 
 ```bash
 codex mcp add android-phone \
   --env PHONE_AGENT_BRIDGE_URL=http://127.0.0.1:8788 \
+  --env PHONE_AGENT_TOKEN="$PHONE_AGENT_TOKEN" \
   -- "$(pwd)/pc/node_modules/.bin/tsx" "$(pwd)/pc/src/mcp/androidPhoneServer.ts"
 ```
 

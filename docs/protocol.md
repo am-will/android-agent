@@ -8,7 +8,7 @@ Android connects outbound to the PC bridge at `/phone`. The bridge validates `to
 {
   "type": "register",
   "deviceId": "openclaw-agent",
-  "token": "12345678",
+  "token": "<shared PHONE_AGENT_TOKEN>",
   "capabilities": ["accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice", "gateway_chat"]
 }
 ```

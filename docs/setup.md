@@ -40,7 +40,7 @@ The bridge exposes:
 
 - `ws://0.0.0.0:8788/phone` for Android
 - `http://127.0.0.1:8788/health` for local status
-- `POST http://127.0.0.1:8788/api/phone/default/command` for the optional `android-phone` tool adapter
+- protected `http://127.0.0.1:8788/api/*` routes for phones, audit, pets, agent control, and command dispatch. Call these with `Authorization: Bearer $PHONE_AGENT_TOKEN` or `X-Phone-Agent-Token: $PHONE_AGENT_TOKEN`.
 
 For off-LAN use, keep `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789` and put only the phone-facing bridge on Tailscale. Run:
 

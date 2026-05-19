@@ -17,7 +17,8 @@ Current prototype note: the copied PC dispatcher still contains a Codex app-serv
 ```bash
 cd pc
 npm install
-export PHONE_AGENT_TOKEN=12345678
+export PHONE_AGENT_TOKEN="$(openssl rand -hex 32)"
+echo "Android token: $PHONE_AGENT_TOKEN"
 export PHONE_AGENT_DISPATCHER=openclaw
 npm run openclaw:mcp
 npm run bridge
@@ -27,7 +28,7 @@ Then build and install the Android app from `android/` with Android Studio or Gr
 
 - WebSocket URL: `ws://<your-computer-lan-ip>:8788/phone`
 - Device ID: `openclaw-agent`
-- Token: `12345678`
+- Token: the `PHONE_AGENT_TOKEN` value printed above
 
 Grant overlay and accessibility permissions, start the agent bubble, then send:
 

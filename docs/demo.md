@@ -6,7 +6,9 @@
 
 ```bash
 cd pc
-PHONE_AGENT_TOKEN=12345678 npm run bridge
+export PHONE_AGENT_TOKEN="$(openssl rand -hex 32)"
+echo "Android token: $PHONE_AGENT_TOKEN"
+npm run bridge
 ```
 
 2. Start the Android app, save pairing, enable overlay and accessibility, then start the bubble.
