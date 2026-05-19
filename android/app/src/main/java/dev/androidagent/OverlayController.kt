@@ -3203,39 +3203,39 @@ class OverlayController(
 
     private fun positionPanelAboveKeyboard(panel: View, params: WindowManager.LayoutParams) {
         val displayHeight = context.resources.displayMetrics.heightPixels
+        val defaultBounds = panelDefaultBounds(displayHeight)
+        val defaultY = defaultBounds.y
+        val defaultBottom = defaultBounds.y + defaultBounds.height
         val imeHeight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             panel.rootWindowInsets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
         } else {
             0
         }
-        val stableFrameKeyboardHeight = keyboardHeightFromStableFrame(displayHeight)
-        if (stableFrameKeyboardHeight >= dp(120)) {
+        val visibleFrameKeyboardTop = keyboardTopFromVisibleFrame(defaultBottom)
+        if (visibleFrameKeyboardTop != null) {
             stableKeyboardFrameObserved = true
         }
-        val keyboardHeight = if (stableFrameKeyboardHeight >= dp(120)) {
+        val keyboardTop = if (visibleFrameKeyboardTop != null) {
             keyboardFallbackSuppressed = false
-            stableFrameKeyboardHeight
+            visibleFrameKeyboardTop
         } else if (imeHeight >= dp(120)) {
             keyboardFallbackSuppressed = false
-            imeHeight + fullscreenKeyboardNavigationInset()
+            defaultBottom - imeHeight
         } else if (stableKeyboardFrameObserved) {
             suppressKeyboardFallback()
-            0
+            displayHeight
         } else if (composerInput?.hasFocus() == true && isKeyboardFallbackActive()) {
-            estimatedKeyboardHeight(displayHeight)
+            defaultBottom - estimatedKeyboardHeight(displayHeight)
         } else {
-            0
+            displayHeight
         }
-        val defaultBounds = panelDefaultBounds(displayHeight)
-        val defaultY = defaultBounds.y
-        if (keyboardHeight < dp(120)) {
+        if (defaultBottom - keyboardTop < dp(120)) {
             restorePanelDefaultSize(panel, params)
             return
         }
 
         panel.translationY = 0f
         setKeyboardSpacerHeight(0)
-        val keyboardTop = displayHeight - keyboardHeight
         val minPanelHeight = dp(300)
         val desiredY = defaultY.coerceAtMost((keyboardTop - minPanelHeight).coerceAtLeast(dp(8)))
         val desiredHeight = (keyboardTop - desiredY - keyboardComposerGap()).coerceAtLeast(dp(240))
@@ -3247,14 +3247,15 @@ class OverlayController(
         }
     }
 
-    private fun keyboardHeightFromStableFrame(displayHeight: Int): Int {
-        val scrim = panelScrimView ?: return 0
+    private fun keyboardTopFromVisibleFrame(defaultPanelBottom: Int): Int? {
+        val scrim = panelScrimView ?: return null
         if (!isOverlayAttached(scrim)) {
-            return 0
+            return null
         }
         val visible = Rect()
         scrim.getWindowVisibleDisplayFrame(visible)
-        return (displayHeight - visible.bottom).coerceAtLeast(0)
+        val keyboardOverlap = defaultPanelBottom - visible.bottom
+        return visible.bottom.takeIf { keyboardOverlap >= dp(120) }
     }
 
     private fun armKeyboardFallback() {
@@ -3326,15 +3327,6 @@ class OverlayController(
             return displayHeight.coerceAtMost(usableHeight)
         }
         return displayHeight
-    }
-
-    private fun fullscreenKeyboardNavigationInset(): Int {
-        if (activePanelPresentation != PanelPresentation.Fullscreen || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            return 0
-        }
-        return windowManager.currentWindowMetrics.windowInsets
-            .getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars())
-            .bottom
     }
 
     private fun keyboardComposerGap(): Int {
