@@ -693,11 +693,11 @@ class OverlayController(
         panelView = host
         panelParams = params
 
-        runPanelOpenAnimation(host, scrim, appearancePrefs(), defaultBounds.height)
-
         renderChatState(lastChatState)
         renderVoiceState(lastVoiceState)
         renderTranscriptionState(lastTranscriptionState)
+
+        runPanelOpenAnimation(host, scrim, appearancePrefs(), defaultBounds.height)
         if (suppressNextPanelViewedCallback) {
             suppressNextPanelViewedCallback = false
         } else {
@@ -2093,6 +2093,15 @@ class OverlayController(
         return hypot(dx, dy)
     }
 
+    private fun snapHistoryToBottom() {
+        val scroll = historyScrollView ?: return
+        val child = scroll.getChildAt(0) ?: return
+        val target = (child.height - scroll.height).coerceAtLeast(0)
+        if (scroll.scrollY != target) {
+            scroll.scrollTo(0, target)
+        }
+    }
+
     private fun cancelPanelOpenAnimators() {
         panelOpenAnimator?.cancel()
         panelOpenAnimator = null
@@ -2135,11 +2144,13 @@ class OverlayController(
                 scrim.visibility = View.INVISIBLE
                 host.post {
                     if (!host.isAttachedToWindow || host.width == 0 || host.height == 0) {
+                        snapHistoryToBottom()
                         host.visibility = View.VISIBLE
                         return@post
                     }
                     val center = revealCenterForPanel(panelParams)
                     val finalRadius = maxRevealRadius(host, center.cx, center.cy)
+                    snapHistoryToBottom()
                     host.visibility = View.VISIBLE
                     val anim = ViewAnimationUtils.createCircularReveal(
                         host,
