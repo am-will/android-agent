@@ -369,6 +369,9 @@ class AccessibilityCommandExecutor(
 
     private fun encodeScreenshot(buffer: HardwareBuffer, colorSpace: android.graphics.ColorSpace): EncodedScreenshot? {
         return try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                return null
+            }
             val bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace)?.copy(Bitmap.Config.ARGB_8888, false) ?: return null
             val bytes = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.PNG, 85, bytes)
