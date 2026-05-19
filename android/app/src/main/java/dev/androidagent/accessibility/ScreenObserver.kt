@@ -9,26 +9,37 @@ import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
 
+@Suppress("DEPRECATION")
 class ScreenObserver {
     private val nodesById = linkedMapOf<String, AccessibilityNodeInfo>()
 
     fun node(id: String): AccessibilityNodeInfo? = nodesById[id]
 
     fun observe(service: PhoneAccessibilityService): JSONObject {
-        nodesById.clear()
+        clearNodes()
         val root = service.rootInActiveWindow
         val nodes = JSONArray()
         val summary = mutableListOf<String>()
-        if (root != null) {
-            walk(root, nodes, summary, 0)
+        val packageName = root?.packageName?.toString().orEmpty()
+        try {
+            if (root != null) {
+                walk(root, nodes, summary, 0)
+            }
+        } finally {
+            root?.recycle()
         }
         return JSONObject()
             .put("deviceId", android.os.Build.MODEL)
-            .put("package", root?.packageName?.toString() ?: "")
+            .put("package", packageName)
             .put("activity", service.lastActivityClassName ?: "")
             .put("display", displayJson(service))
             .put("screenSummary", summary.take(12).joinToString(" | "))
             .put("nodes", nodes)
+    }
+
+    fun clearNodes() {
+        nodesById.values.forEach { it.recycle() }
+        nodesById.clear()
     }
 
     private fun walk(node: AccessibilityNodeInfo, out: JSONArray, summary: MutableList<String>, depth: Int) {
@@ -47,7 +58,7 @@ class ScreenObserver {
         node.getBoundsInScreen(rect)
         if (!rect.isEmpty && (text.isNotBlank() || contentDescription.isNotBlank() || node.isClickable || node.isScrollable || node.isFocused)) {
             val id = "n${nodesById.size + 1}"
-            nodesById[id] = node
+            nodesById[id] = AccessibilityNodeInfo.obtain(node)
             out.put(
                 JSONObject()
                     .put("id", id)
@@ -62,7 +73,12 @@ class ScreenObserver {
         }
 
         for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { child -> walk(child, out, summary, depth + 1) }
+            val child = node.getChild(i) ?: continue
+            try {
+                walk(child, out, summary, depth + 1)
+            } finally {
+                child.recycle()
+            }
         }
     }
 
