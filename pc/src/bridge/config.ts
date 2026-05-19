@@ -39,13 +39,26 @@ function nestedString(value: unknown, path: string[]): string | undefined {
   return typeof current === "string" && current.trim() ? current.trim() : undefined;
 }
 
+const weakPhoneAgentTokens = new Set(["12345678"]);
+
+function readPhoneAgentToken(): string {
+  const token = process.env.PHONE_AGENT_TOKEN?.trim();
+  if (!token) {
+    throw new Error("PHONE_AGENT_TOKEN is required. Copy pc/.env.example to pc/.env.local and set a strong shared token.");
+  }
+  if (weakPhoneAgentTokens.has(token)) {
+    throw new Error("PHONE_AGENT_TOKEN uses a known weak default. Generate a strong token and save it on both PC and Android.");
+  }
+  return token;
+}
+
 export function getBridgeConfig(): BridgeConfig {
   const port = Number.parseInt(process.env.PHONE_AGENT_PORT ?? "8788", 10);
   const openClawConfig = readOpenClawConfig();
   return {
     host: process.env.PHONE_AGENT_HOST ?? "0.0.0.0",
     port,
-    token: process.env.PHONE_AGENT_TOKEN ?? "12345678",
+    token: readPhoneAgentToken(),
     defaultDeviceId: process.env.PHONE_AGENT_DEFAULT_DEVICE ?? "openclaw-agent",
     bridgeUrl: process.env.PHONE_AGENT_BRIDGE_URL ?? `http://127.0.0.1:${port}`,
     openClawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:18789",
