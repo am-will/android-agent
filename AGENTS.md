@@ -15,7 +15,7 @@
 - PC type check: `cd pc && npm run check`
 - PC build: `cd pc && npm run build`
 - PC tests: `cd pc && npm test`
-- PC bridge: `cd pc && PHONE_AGENT_TOKEN=12345678 npm run bridge`
+- PC bridge: `cd pc && npm run bridge` (auto-loads `pc/.env.local` via `tsx --env-file-if-exists`; command-line env vars still win for one-off overrides)
 - PC MCP server: `cd pc && npm run mcp`
 - Register phone MCP with OpenClaw: `cd pc && npm run openclaw:mcp`
 - PC bridge health: `cd pc && npm run phone:health`
@@ -32,7 +32,8 @@
 - Keep model and reasoning options aligned across `pc/src/protocol/messages.ts` and `android/app/src/main/java/dev/androidagent/AgentModelOptions.kt`.
 - Keep the default phone-agent safety/operating prompt aligned between `pc/src/dispatcher/safetyPrompt.ts` and `android/app/src/main/java/dev/androidagent/DefaultSystemPrompt.kt`.
 - Do not hand-edit `pc/src/generated/`; while the legacy Codex adapter remains, regenerate it with `cd pc && npm run codex:schemas`.
-- Treat `PHONE_AGENT_TOKEN`, `OPENAI_API_KEY`, saved Android API keys, LAN URLs, device IDs, and other device-specific values as local config. Do not commit real tokens, keys, or machine-specific secrets.
+- Treat `PHONE_AGENT_TOKEN`, `OPENAI_API_KEY`, saved Android API keys, LAN URLs, device IDs, and other device-specific values as local config. Do not commit real tokens, keys, or machine-specific secrets. The PC's persistent config lives in `pc/.env.local` (gitignored via `.env.*`); `pc/.env.example` documents the shape. The Android side stores its token under `dev.openclawagent`'s `shared_prefs/open_claw_agent_config.xml`; both ends must match exactly or the bridge closes the WebSocket with code `4001 invalid token`.
+- Phone↔bridge handshake is two-step: TCP/WS open is not enough. `PhoneWebSocketClient` only flips `connected = true` after receiving an `agent_status` whose text starts with `"Registered "` (sent by `server.ts` after `hub.register`). A 5 s register-ack watchdog will `cancel()` the socket and reconnect if the ack never arrives. When changing the register path on either side, preserve that ack text and behavior, or update both ends together — silent token mismatches and pre-ack sends are the bug class this guards against.
 - Realtime voice depends on an OpenAI API key supplied either through `OPENAI_API_KEY` on the PC bridge or the Android app settings. `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`, and `OPENAI_WEB_SEARCH_MODEL` are bridge-side runtime config.
 - Screenshots and coordinate taps use full-screen physical pixels, including system bars. Use normalized taps for coordinates derived from scaled screenshots, and preserve screenshot width/height metadata through the protocol.
 - Android agent chrome may temporarily hide during taps, swipes, and screenshots; this should not stop active turns, voice sessions, or the foreground service.

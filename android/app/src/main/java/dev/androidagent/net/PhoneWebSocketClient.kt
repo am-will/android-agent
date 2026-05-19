@@ -38,14 +38,18 @@ class PhoneWebSocketClient(
     private var manuallyClosed = false
     private var reconnectAttempts = 0
     private var connected = false
+    private var registered = false
     private var reconnectRunnable: Runnable? = null
+    private var registerTimeoutRunnable: Runnable? = null
 
     fun connect() {
         if (manuallyClosed) return
         if (socket != null) return
         cancelScheduledReconnect()
+        cancelRegisterTimeout()
         manuallyClosed = false
         connected = false
+        registered = false
         val request = Request.Builder().url(config.hostUrl).build()
         socket = client.newWebSocket(request, this)
         onStatus("Connecting to ${config.hostUrl}", "info")
@@ -54,9 +58,11 @@ class PhoneWebSocketClient(
     fun close() {
         manuallyClosed = true
         connected = false
+        registered = false
         socket?.close(1000, "service stopped")
         socket = null
         cancelScheduledReconnect()
+        cancelRegisterTimeout()
         client.dispatcher.executorService.shutdown()
     }
 
@@ -69,7 +75,7 @@ class PhoneWebSocketClient(
             .put("systemPrompt", requestConfig.systemPrompt)
             .put("model", requestConfig.model)
             .put("reasoningEffort", requestConfig.reasoningEffort)
-        socket?.send(message.toString())
+        sendJson(message, reportChatError = true)
     }
 
     fun sendStopRequest(reason: String) {
@@ -201,8 +207,10 @@ class PhoneWebSocketClient(
             return
         }
         cancelScheduledReconnect()
+        cancelRegisterTimeout()
         reconnectAttempts = 0
-        connected = true
+        connected = false
+        registered = false
         val register = JSONObject()
             .put("type", "register")
             .put("deviceId", config.deviceId)
@@ -211,15 +219,27 @@ class PhoneWebSocketClient(
                 "capabilities",
                 JSONArray(listOf("accessibility_tree", "gestures", "text_input", "screenshots", "app_launch", "realtime_voice", "gateway_chat"))
             )
-        webSocket.send(register.toString())
-        sendChatOpen()
-        onStatus("Connected and registered as ${config.deviceId}", "info")
+        val accepted = webSocket.send(register.toString())
+        Log.i(TAG, "register sent=$accepted deviceId=${config.deviceId}")
+        onStatus("Authenticating with ${config.hostUrl}", "info")
+        scheduleRegisterTimeout(webSocket)
     }
 
     override fun onMessage(webSocket: WebSocket, text: String) {
         val message = JSONObject(text)
         if (message.optString("type").startsWith("realtime.")) {
             Log.i(TAG, "received ${message.optString("type")}")
+        }
+        if (!registered && message.optString("type") == "agent_status") {
+            val statusText = message.optString("text")
+            if (statusText.startsWith("Registered ")) {
+                registered = true
+                connected = true
+                cancelRegisterTimeout()
+                sendChatOpen()
+                onStatus("Connected and registered as ${config.deviceId}", "info")
+                return
+            }
         }
         when (message.optString("type")) {
             "command" -> handleCommand(webSocket, message)
@@ -254,7 +274,10 @@ class PhoneWebSocketClient(
         if (webSocket != socket) return
         socket = null
         connected = false
+        registered = false
+        cancelRegisterTimeout()
         onStatus("WebSocket error: ${t.message}", "error")
+        reportBridgeChatError("Bridge connection failed: ${t.message ?: "unknown error"}")
         scheduleReconnect()
     }
 
@@ -262,32 +285,55 @@ class PhoneWebSocketClient(
         if (webSocket != socket) return
         socket = null
         connected = false
-        onStatus("Disconnected: $reason", "error")
-        scheduleReconnect()
+        registered = false
+        cancelRegisterTimeout()
+        val (statusText, longBackoff) = when (code) {
+            4001 -> {
+                "Bridge rejected token (4001 $reason). Update PHONE_AGENT_TOKEN on the PC or re-pair from app Settings." to true
+            }
+            4002 -> {
+                "Bridge required register first (4002 $reason); reconnecting..." to false
+            }
+            4003 -> {
+                "Bridge did not acknowledge registration; reconnecting..." to false
+            }
+            else -> "Disconnected: $reason (code $code)" to false
+        }
+        onStatus(statusText, "error")
+        reportBridgeChatError(statusText)
+        scheduleReconnect(longBackoff)
     }
 
     private fun sendJson(message: JSONObject, reportChatError: Boolean = false): Boolean {
         val type = message.optString("type", "message")
-        val sent = connected && socket?.send(message.toString()) == true
-        Log.i(TAG, "send $type sent=$sent connected=$connected")
+        val sent = connected && registered && socket?.send(message.toString()) == true
+        Log.i(TAG, "send $type sent=$sent connected=$connected registered=$registered")
         if (!sent) {
-            val error = "Bridge is not connected. Check the PC bridge at ${config.hostUrl}; reconnecting..."
+            val error = "Bridge is not registered. Check the PC bridge at ${config.hostUrl}; reconnecting..."
             onStatus(error, "error")
             if (reportChatError) {
-                onChatMessage(JSONObject()
-                    .put("type", "chat.error")
-                    .put("deviceId", config.deviceId)
-                    .put("message", error))
+                reportBridgeChatError(error)
             }
         }
         return sent
     }
 
-    private fun scheduleReconnect() {
+    private fun reportBridgeChatError(message: String) {
+        onChatMessage(JSONObject()
+            .put("type", "chat.error")
+            .put("deviceId", config.deviceId)
+            .put("message", message))
+    }
+
+    private fun scheduleReconnect(longBackoff: Boolean = false) {
         if (manuallyClosed || reconnectRunnable != null) {
             return
         }
-        val delayMs = (1_000L * (reconnectAttempts + 1)).coerceAtMost(10_000L)
+        val delayMs = if (longBackoff) {
+            TOKEN_REJECTED_BACKOFF_MS
+        } else {
+            (1_000L * (reconnectAttempts + 1)).coerceAtMost(10_000L)
+        }
         reconnectAttempts += 1
         val task = Runnable {
             reconnectRunnable = null
@@ -302,6 +348,35 @@ class PhoneWebSocketClient(
     private fun cancelScheduledReconnect() {
         reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
         reconnectRunnable = null
+    }
+
+    private fun scheduleRegisterTimeout(webSocket: WebSocket) {
+        cancelRegisterTimeout()
+        val task = Runnable {
+            registerTimeoutRunnable = null
+            if (!registered && webSocket == socket) {
+                Log.w(TAG, "register ack timed out after ${REGISTER_TIMEOUT_MS}ms")
+                handleHandshakeFailure(webSocket, "Bridge did not acknowledge registration within ${REGISTER_TIMEOUT_MS / 1000}s. Confirm PHONE_AGENT_TOKEN matches the app's saved token and the bridge is running.")
+            }
+        }
+        registerTimeoutRunnable = task
+        mainHandler.postDelayed(task, REGISTER_TIMEOUT_MS)
+    }
+
+    private fun handleHandshakeFailure(webSocket: WebSocket, statusText: String) {
+        socket = null
+        connected = false
+        registered = false
+        cancelRegisterTimeout()
+        webSocket.cancel()
+        onStatus(statusText, "error")
+        reportBridgeChatError(statusText)
+        scheduleReconnect()
+    }
+
+    private fun cancelRegisterTimeout() {
+        registerTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        registerTimeoutRunnable = null
     }
 
     private fun handleCommand(webSocket: WebSocket, message: JSONObject) {
@@ -323,5 +398,7 @@ class PhoneWebSocketClient(
 
     companion object {
         private const val TAG = "PhoneWebSocketClient"
+        private const val REGISTER_TIMEOUT_MS = 5_000L
+        private const val TOKEN_REJECTED_BACKOFF_MS = 30_000L
     }
 }
