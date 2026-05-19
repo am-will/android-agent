@@ -2917,12 +2917,23 @@ class OverlayController(
                 val height = popupPanelHeight(displayHeight)
                 PanelBounds(height = height, y = displayHeight - height)
             }
-            PanelPresentation.Fullscreen -> PanelBounds(height = displayHeight, y = 0)
+            PanelPresentation.Fullscreen -> PanelBounds(height = fullscreenPanelHeight(displayHeight), y = 0)
         }
     }
 
     private fun popupPanelHeight(displayHeight: Int): Int {
         return (displayHeight * CHAT_MODAL_HEIGHT_FRACTION).toInt()
+    }
+
+    private fun fullscreenPanelHeight(displayHeight: Int): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = windowManager.currentWindowMetrics
+            val systemBars = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
+            val usableHeight = (metrics.bounds.height() - systemBars.top - systemBars.bottom)
+                .coerceAtLeast(dp(360))
+            return displayHeight.coerceAtMost(usableHeight)
+        }
+        return displayHeight
     }
 
     private fun estimatedKeyboardHeight(displayHeight: Int): Int {
