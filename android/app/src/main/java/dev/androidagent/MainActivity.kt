@@ -36,16 +36,24 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import dev.androidagent.accessibility.PhoneAccessibilityService
+import dev.androidagent.avatar.AvatarConfigStore
+import dev.androidagent.avatar.AvatarLibrary
+import dev.androidagent.avatar.AvatarSelection
+import dev.androidagent.avatar.PetAsset
 import dev.androidagent.ui.DesignTokens
 import dev.androidagent.ui.Drawables
 import dev.androidagent.ui.ThemeTokens
 import dev.androidagent.ui.Typography
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     private lateinit var endpointSummary: TextView
     private lateinit var statusText: TextView
     private val statusChips = mutableMapOf<String, TextView>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val avatarRefreshExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "AvatarRefresh").apply { isDaemon = true }
+    }
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AgentForegroundService.ACTION_STATE_CHANGED) {
@@ -80,6 +88,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
+        avatarRefreshExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -314,6 +323,19 @@ class MainActivity : ComponentActivity() {
         )
         content.addView(animationSpinner, stackedParams(DesignTokens.Spacing.sm))
 
+        content.addView(fieldLabel("Avatar", tokens), stackedParams(DesignTokens.Spacing.lg))
+        content.addView(body("Choose what shows in the floating bubble. Pets are imported from your PC's Codex pets folder.", tokens).apply {
+            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
+        }, stackedParams(DesignTokens.Spacing.xs))
+        val avatarSummary = body(currentAvatarSummary(), tokens).apply {
+            background = Drawables.glassInset(this@MainActivity, tokens, DesignTokens.Radius.md)
+            setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md + 2), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md + 2))
+        }
+        content.addView(avatarSummary, stackedParams(DesignTokens.Spacing.sm))
+        content.addView(actionButton("Open Avatar Picker", ButtonTone.Secondary, tokens) {
+            showAvatarPickerMenu { avatarSummary.text = currentAvatarSummary() }
+        }, stackedParams(DesignTokens.Spacing.sm + 2))
+
         val dialog = AlertDialog.Builder(this)
             .setTitle("Appearance")
             .setView(ScrollView(this).apply {
@@ -335,6 +357,125 @@ class MainActivity : ComponentActivity() {
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(tokens.secondaryText)
         }
         dialog.show()
+    }
+
+    private fun currentAvatarSummary(): String {
+        return when (val selection = AvatarConfigStore.load(this)) {
+            is AvatarSelection.Lobster -> "Current: Lobster (default)"
+            is AvatarSelection.Pet -> {
+                val asset = AvatarLibrary.findCached(this, selection.id)
+                "Current: ${asset?.displayName ?: selection.id}"
+            }
+        }
+    }
+
+    private fun showAvatarPickerMenu(onSelected: () -> Unit) {
+        val tokens = tokens()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(DesignTokens.Spacing.xl), dp(DesignTokens.Spacing.md), dp(DesignTokens.Spacing.xl), dp(DesignTokens.Spacing.md))
+        }
+        val listView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val statusView = body("Scanning host...", tokens).apply {
+            setPadding(0, dp(DesignTokens.Spacing.md), 0, 0)
+            textSize = DesignTokens.Text.footnote
+        }
+        container.addView(listView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        container.addView(statusView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Avatar")
+            .setView(ScrollView(this).apply {
+                addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            })
+            .setNegativeButton("Close", null)
+            .create()
+
+        val refresh: (List<PetAsset>) -> Unit = { pets ->
+            listView.removeAllViews()
+            val currentSelection = AvatarConfigStore.load(this)
+            listView.addView(avatarPickerRow(
+                title = "Lobster",
+                subtitle = "Default Open Claw mark.",
+                tokens = tokens,
+                selected = currentSelection is AvatarSelection.Lobster
+            ) {
+                AvatarConfigStore.save(this, AvatarSelection.Lobster)
+                onSelected()
+                dialog.dismiss()
+            })
+            for (pet in pets) {
+                listView.addView(avatarPickerRow(
+                    title = pet.displayName,
+                    subtitle = pet.description.ifBlank { "Imported pet" },
+                    tokens = tokens,
+                    selected = currentSelection is AvatarSelection.Pet && currentSelection.id == pet.id
+                ) {
+                    AvatarConfigStore.save(this, AvatarSelection.Pet(pet.id))
+                    onSelected()
+                    dialog.dismiss()
+                })
+            }
+        }
+
+        refresh(AvatarLibrary.listCached(this))
+
+        val hostUrl = AgentConfigStore.load(this).hostUrl
+        avatarRefreshExecutor.execute {
+            val result = AvatarLibrary.refreshFromHost(applicationContext, hostUrl)
+            mainHandler.post {
+                result.onSuccess { pets ->
+                    refresh(pets)
+                    statusView.text = if (pets.isEmpty()) {
+                        "Connected to host. No pets found in ~/.codex/pets/."
+                    } else {
+                        "Imported ${pets.size} pet${if (pets.size == 1) "" else "s"} from host."
+                    }
+                }
+                result.onFailure { error ->
+                    statusView.text = "Could not reach host: ${error.message ?: "unknown error"}"
+                }
+            }
+        }
+
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(
+                Drawables.glassSurface(this@MainActivity, tokens, DesignTokens.Radius.xl)
+            )
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(tokens.secondaryText)
+        }
+        dialog.show()
+    }
+
+    private fun avatarPickerRow(
+        title: String,
+        subtitle: String,
+        tokens: ThemeTokens,
+        selected: Boolean,
+        onClick: () -> Unit
+    ): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Drawables.glassInset(this@MainActivity, tokens, DesignTokens.Radius.md)
+            setPadding(dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md + 2), dp(DesignTokens.Spacing.lg), dp(DesignTokens.Spacing.md + 2))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        row.addView(TextView(this).apply {
+            text = if (selected) "$title  •  selected" else title
+            Typography.applyCallout(this, tokens)
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(if (selected) tokens.accent else tokens.primaryText)
+        })
+        row.addView(TextView(this).apply {
+            text = subtitle
+            Typography.applyFootnote(this, tokens, secondary = true)
+            setPadding(0, dp(DesignTokens.Spacing.xs), 0, 0)
+        })
+        return row
     }
 
     private fun showSystemPromptEditor(initialText: String, onSave: (String) -> Unit) {
